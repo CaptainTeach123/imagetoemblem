@@ -11,9 +11,11 @@ For textured or colored backgrounds, choose **Remove sampled background** and cl
 ## What it does
 
 - Runs entirely in the browser; images are never uploaded.
-- Supports background-color removal and light/dark thresholding.
+- Automatically detects bilateral emblems and rejects unmatched background texture.
+- Removes small disconnected noise with an adjustable component-size filter.
+- Supports sampled-background, metallic, and light/dark detection modes.
 - Traces the raster mask into closed vector contours at up to 700 px resolution.
-- Smooths curves geometrically while preserving disconnected pieces and internal openings.
+- Smooths curves geometrically while preserving meaningful disconnected pieces, internal openings, and open-ended strokes.
 - Builds closed top, bottom, rounded bevel, and boundary surfaces in millimeters.
 - Provides an interactive Three.js preview and binary STL export.
 
