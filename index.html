@@ -199,6 +199,10 @@
       for(let y=0;y<h;y++)for(let x=0;x<w;x++){let v=dilate?0:1;for(let d=-radius;d<=radius;d++){const xx=Math.max(0,Math.min(w-1,x+d));v=dilate?Math.max(v,m[y*w+xx]):Math.min(v,m[y*w+xx])}tmp[y*w+x]=v}
       for(let y=0;y<h;y++)for(let x=0;x<w;x++){let v=dilate?0:1;for(let d=-radius;d<=radius;d++){const yy=Math.max(0,Math.min(h-1,y+d));v=dilate?Math.max(v,tmp[yy*w+x]):Math.min(v,tmp[yy*w+x])}out[y*w+x]=v}return out;
     }
+    function diskMorph(m,w,h,radius,dilate){
+      if(radius<=0)return m.slice();const out=new Uint8Array(m.length),r2=radius*radius;
+      for(let y=0;y<h;y++)for(let x=0;x<w;x++){let v=dilate?0:1;outer:for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++){if(dx*dx+dy*dy>r2)continue;const xx=Math.max(0,Math.min(w-1,x+dx)),yy=Math.max(0,Math.min(h-1,y+dy)),q=m[yy*w+xx];if(dilate?q:!q){v=dilate?1:0;break outer}}out[y*w+x]=v}return out;
+    }
     function components(m,w,h,value=1){
       const seen=new Uint8Array(m.length),groups=[],queue=[],steps=[[1,0],[-1,0],[0,1],[0,-1]];
       for(let i=0;i<m.length;i++)if(m[i]===value&&!seen[i]){seen[i]=1;queue.length=0;queue.push(i);const cells=[];let border=false;
@@ -258,11 +262,11 @@
       if(mode==='auto'&&!inverted){
         const colorClean=majority(color,w,h,1),sym=symmetricMask(colorClean,w,h);symmetry=sym.ratio;
         let metalSeed=removeNoise(majority(metal,w,h,1),w,h,ratio,telemetry);const seamLeft=(w-1)>>1,seamRight=w>>1;let seamEvidence=0;for(let y=0;y<h;y++)seamEvidence+=metalSeed[y*w+seamLeft]+metalSeed[y*w+seamRight];
-        const grown=morph(metalSeed,w,h,Math.max(1,Math.round(w/450)),true),conservative=mirrorIntersection(grown,w,h),protectedHoles=protectedPairedHoles(conservative,redLike,w,h),detail=removeNoise(mirrorUnion(grown,w,h),w,h,ratio,telemetry);
+        const grown=diskMorph(metalSeed,w,h,Math.max(1,Math.round(w/450)),true),conservative=mirrorIntersection(grown,w,h),protectedHoles=protectedPairedHoles(conservative,redLike,w,h),detail=removeNoise(mirrorUnion(grown,w,h),w,h,ratio,telemetry);
         if(symmetry>=.62){
           const symClean=removeNoise(sym.mask,w,h,ratio,telemetry),near=morph(detail,w,h,Math.max(8,Math.round(w*.018)),true),union=new Uint8Array(w*h);
           for(let i=0;i<union.length;i++)union[i]=detail[i]||(symClean[i]&&near[i])?1:0;
-          m=union;const closeRadius=1;m=morph(morph(m,w,h,closeRadius,true),w,h,closeRadius,false);m=removeNoise(m,w,h,ratio,telemetry);m=fillUnprotectedHoles(m,protectedHoles,w,h);m=fillTinyHoles(m,w,h,10);
+          m=union;const closeRadius=Math.max(1,Math.round(w/600));m=diskMorph(diskMorph(m,w,h,closeRadius,true),w,h,closeRadius,false);m=removeNoise(m,w,h,ratio,telemetry);m=fillUnprotectedHoles(m,protectedHoles,w,h);m=fillTinyHoles(m,w,h,10);
           if(!seamEvidence){const pad=Math.max(1,Math.round(w/700));for(let y=0;y<h;y++)for(let x=Math.max(0,seamLeft-pad);x<=Math.min(w-1,seamRight+pad);x++)m[y*w+x]=0}
           m=removeNoise(m,w,h,ratio,telemetry);
           const passes=Math.max(1,Math.round(+ui.smooth.value/3)),fgField=gaussianField(m,w,h,passes),holeField=gaussianField(protectedHoles,w,h,passes),field=new Float32Array(m.length),finalMask=new Uint8Array(m.length);
