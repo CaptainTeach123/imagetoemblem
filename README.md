@@ -11,7 +11,8 @@ For textured or colored backgrounds, choose **Remove sampled background** and cl
 ## What it does
 
 - Runs entirely in the browser; images are never uploaded.
-- Automatically detects bilateral emblems and rejects unmatched background texture.
+- Combines metallic-color evidence with mirrored outline evidence, then enforces exact symmetry when confidence is high.
+- Preserves meaningful internal cutouts while filling only non-printable sub-pixel pinholes.
 - Removes small disconnected noise with an adjustable component-size filter.
 - Supports sampled-background, metallic, and light/dark detection modes.
 - Traces the raster mask into sub-pixel vector contours at up to 900 px resolution.
