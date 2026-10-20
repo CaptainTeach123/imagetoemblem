@@ -1,7 +1,26 @@
-# Image to Emblem
+# Relief Forge
 
-A web application for turning 2D emblem artwork into extruded, 3D-printable STL models.
+A zero-install browser app that converts ornamental 2D artwork into a watertight, printable relief and exports it as a binary STL.
 
-Planned workflow: upload a PNG/JPG/WEBP; isolate the emblem from its background; trace the silhouette and openings; adjust height, thickness, and bevel; preview the geometry in 3D; export an STL.
+## Use
 
-Work in progress.
+Open `index.html` through GitHub Pages or any static web server. Upload an image, select a detection mode, adjust the preview, enter the desired dimensions, and choose **Export STL**.
+
+For textured or colored backgrounds, choose **Remove sampled background** and click a representative background area in the uploaded image. The app samples the four corners automatically on upload.
+
+## What it does
+
+- Runs entirely in the browser; images are never uploaded.
+- Supports background-color removal and light/dark thresholding.
+- Cleans isolated edge noise with configurable majority-filter passes.
+- Builds closed top, bottom, and boundary surfaces in millimeters.
+- Provides an interactive Three.js preview and binary STL export.
+
+## Printing notes
+
+The generated model is a flat-backed relief. Import it into your slicer in millimeters. A 2–4 mm thickness is a useful starting point for badges and decorative emblems. Source artwork with a clear silhouette produces the best result.
+
+## Development
+
+No build step is required. The viewer loads Three.js as an ES module from jsDelivr, so an internet connection is required for the 3D preview.
+
