@@ -14,9 +14,10 @@ For textured or colored backgrounds, choose **Remove sampled background** and cl
 - Automatically detects bilateral emblems and rejects unmatched background texture.
 - Removes small disconnected noise with an adjustable component-size filter.
 - Supports sampled-background, metallic, and light/dark detection modes.
-- Traces the raster mask into closed vector contours at up to 700 px resolution.
+- Traces the raster mask into sub-pixel vector contours at up to 900 px resolution.
 - Smooths curves geometrically while preserving meaningful disconnected pieces, internal openings, and open-ended strokes.
-- Builds closed top, bottom, rounded bevel, and boundary surfaces in millimeters.
+- Uses continuous-field edge smoothing to remove pixel stair-steps without repeatedly rounding sharp ornamental tips.
+- Builds exact-thickness front/back surfaces and a ten-segment bevel around outer edges and every internal cutout.
 - Provides an interactive Three.js preview and binary STL export.
 
 ## Printing notes
