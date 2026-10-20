@@ -216,6 +216,7 @@
       return {mask:out,ratio:Math.min(1,matched/Math.max(1,sourceCount))};
     }
     function mirrorIntersection(m,w,h){const out=new Uint8Array(m.length);for(let y=0;y<h;y++)for(let x=0;x<w;x++)out[y*w+x]=m[y*w+x]&&m[y*w+(w-1-x)]?1:0;return out}
+    function mirrorUnion(m,w,h){const out=new Uint8Array(m.length);for(let y=0;y<h;y++)for(let x=0;x<w;x++)out[y*w+x]=m[y*w+x]||m[y*w+(w-1-x)]?1:0;return out}
     function protectedPairedHoles(detail,redLike,w,h){
       const candidates=[];
       for(const cells of components(detail,w,h,0)){
@@ -242,7 +243,7 @@
       return a;
     }
     function maskBounds(m,w,h){let minX=w,minY=h,maxX=-1,maxY=-1;for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(m[y*w+x]){minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y)}return {minX,minY,maxX,maxY}}
-    function cleanupRatio(){return ui.cleanup.value==='low'?.0015:ui.cleanup.value==='high'?.012:.004}
+    function cleanupRatio(){return ui.cleanup.value==='low'?.00035:ui.cleanup.value==='high'?.006:.001}
 
     function makeMask(){
       const max=+ui.resolution.value,aspect=source.naturalWidth/source.naturalHeight,w=aspect>=1?max:Math.round(max*aspect),h=aspect>=1?Math.round(max/aspect):max;
@@ -257,11 +258,11 @@
       if(mode==='auto'&&!inverted){
         const colorClean=majority(color,w,h,1),sym=symmetricMask(colorClean,w,h);symmetry=sym.ratio;
         let metalSeed=removeNoise(majority(metal,w,h,1),w,h,ratio,telemetry);const seamLeft=(w-1)>>1,seamRight=w>>1;let seamEvidence=0;for(let y=0;y<h;y++)seamEvidence+=metalSeed[y*w+seamLeft]+metalSeed[y*w+seamRight];
-        const detail=mirrorIntersection(morph(metalSeed,w,h,Math.max(1,Math.round(w/450)),true),w,h),protectedHoles=protectedPairedHoles(detail,redLike,w,h);
+        const detail=mirrorUnion(morph(metalSeed,w,h,1,true),w,h),protectedHoles=protectedPairedHoles(detail,redLike,w,h);
         if(symmetry>=.62){
           const symClean=removeNoise(sym.mask,w,h,ratio,telemetry),near=morph(detail,w,h,Math.max(8,Math.round(w*.018)),true),union=new Uint8Array(w*h);
           for(let i=0;i<union.length;i++)union[i]=detail[i]||(symClean[i]&&near[i])?1:0;
-          m=mirrorIntersection(union,w,h);const closeRadius=Math.max(1,Math.round(w/600));m=morph(morph(m,w,h,closeRadius,true),w,h,closeRadius,false);m=removeNoise(m,w,h,ratio,telemetry);m=fillUnprotectedHoles(m,protectedHoles,w,h);m=fillTinyHoles(m,w,h,Math.max(6,w*h*.00005));
+          m=mirrorUnion(union,w,h);const closeRadius=1;m=morph(morph(m,w,h,closeRadius,true),w,h,closeRadius,false);m=removeNoise(m,w,h,ratio,telemetry);m=fillUnprotectedHoles(m,protectedHoles,w,h);m=fillTinyHoles(m,w,h,10);
           if(!seamEvidence){const pad=Math.max(1,Math.round(w/700));for(let y=0;y<h;y++)for(let x=Math.max(0,seamLeft-pad);x<=Math.min(w-1,seamRight+pad);x++)m[y*w+x]=0}
           m=removeNoise(m,w,h,ratio,telemetry);
           const passes=Math.max(1,Math.round(+ui.smooth.value/3)),fgField=gaussianField(m,w,h,passes),holeField=gaussianField(protectedHoles,w,h,passes),field=new Float32Array(m.length),finalMask=new Uint8Array(m.length);
@@ -330,7 +331,8 @@
       const base=id=>({key:'g'+id,id,x:id%g.w,y:(id/g.w)|0,value:g.field[id],boundary:Math.abs(g.field[id]-.5)<1e-7});
       function cross(a,b){const lo=Math.min(a.id,b.id),hi=Math.max(a.id,b.id),key='e'+lo+'_'+hi;if(crossings.has(key))return crossings.get(key);const t=(.5-a.value)/(b.value-a.value),v={key,id:-1,x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,value:.5,boundary:true};crossings.set(key,v);return v}
       function clip(poly){const out=[];for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length],insideA=a.value>=.5,insideB=b.value>=.5;if(insideA&&insideB)out.push(b);else if(insideA&&!insideB)out.push(cross(a,b));else if(!insideA&&insideB){out.push(cross(a,b));out.push(b)}}return out.filter((v,i,a)=>!i||v.key!==a[i-1].key)}
-      function pair(v){if(pairs.has(v.key))return pairs.get(v.key);const x=(v.x-centerX)*cell,y=(centerY-v.y)*cell,d=continuousDistance(v),s=edgeWidth>0?Math.max(0,Math.min(1,d/edgeWidth)):1,profile=style==='reference'?Math.pow(s,1.03):style==='soft'?Math.sqrt(Math.max(0,2*s-s*s)):1,z=edgeWidth>0?coreHalf+axial*profile:half,top=positions.length/3;positions.push(x,y,z);const bottom=positions.length/3;positions.push(x,y,-z);const p={top,bottom};pairs.set(v.key,p);return p}
+      function referenceProfile(s){const a=.72;if(s<=a)return s;const u=(s-a)/(1-a),u2=u*u,u3=u2*u,u4=u3*u,u5=u4*u;return a+(1-a)*(u+4*u3-7*u4+3*u5)}
+      function pair(v){if(pairs.has(v.key))return pairs.get(v.key);const x=(v.x-centerX)*cell,y=(centerY-v.y)*cell,d=continuousDistance(v),s=edgeWidth>0?Math.max(0,Math.min(1,d/edgeWidth)):1,profile=style==='reference'?referenceProfile(s):style==='soft'?Math.sqrt(Math.max(0,2*s-s*s)):1,z=edgeWidth>0?coreHalf+axial*profile:half,top=positions.length/3;positions.push(x,y,z);const bottom=positions.length/3;positions.push(x,y,-z);const p={top,bottom};pairs.set(v.key,p);return p}
       function area(poly){let a=0;for(let i=0;i<poly.length;i++){const p=poly[i],q=poly[(i+1)%poly.length];a+=(p.x-centerX)*(centerY-q.y)-(q.x-centerX)*(centerY-p.y)}return a/2}
       function addFace(a,b,c){const ax=positions[b*3]-positions[a*3],ay=positions[b*3+1]-positions[a*3+1],az=positions[b*3+2]-positions[a*3+2],bx=positions[c*3]-positions[a*3],by=positions[c*3+1]-positions[a*3+1],bz=positions[c*3+2]-positions[a*3+2],cx=ay*bz-az*by,cy=az*bx-ax*bz,cz=ax*by-ay*bx;if(cx*cx+cy*cy+cz*cz>1e-18)indices.push(a,b,c)}
       function addPolygon(poly){if(poly.length<3)return;if(area(poly)<0)poly.reverse();const ps=poly.map(pair);for(let i=1;i<ps.length-1;i++){addFace(ps[0].top,ps[i].top,ps[i+1].top);addFace(ps[0].bottom,ps[i+1].bottom,ps[i].bottom)}for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];if(!a.boundary||!b.boundary||a.key===b.key||Math.hypot(a.x-b.x,a.y-b.y)<1e-8)continue;const key=a.key<b.key?a.key+'|'+b.key:b.key+'|'+a.key;if(boundary.has(key))boundary.get(key).count++;else boundary.set(key,{a,b,count:1})}}
