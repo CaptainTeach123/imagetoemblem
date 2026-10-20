@@ -106,6 +106,7 @@
   <script type="module">
     import * as THREE from 'three';
     import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+    import {contours as makeContours} from 'https://cdn.jsdelivr.net/npm/d3-contour@4/+esm';
 
     const $=id=>document.getElementById(id);
     const stage=$('threeView'),source=$('originalView'),work=$('work'),cutout=$('cutoutView');
@@ -300,7 +301,22 @@
       return dist;
     }
 
+    function simplifyRing(points,epsilon=.22){
+      if(points.length<5)return points;const sq=epsilon*epsilon,dist=(p,a,b)=>{let x=a[0],y=a[1],dx=b[0]-x,dy=b[1]-y;if(dx||dy){const t=Math.max(0,Math.min(1,((p[0]-x)*dx+(p[1]-y)*dy)/(dx*dx+dy*dy)));x+=dx*t;y+=dy*t}dx=p[0]-x;dy=p[1]-y;return dx*dx+dy*dy};
+      function rdp(a,first,last,out){let max=sq,at=0;for(let i=first+1;i<last;i++){const d=dist(a[i],a[first],a[last]);if(d>max){at=i;max=d}}if(at){if(at-first>1)rdp(a,first,at,out);out.push(a[at]);if(last-at>1)rdp(a,at,last,out)}}
+      const a=[...points,points[0]],out=[a[0]];rdp(a,0,a.length-1,out);out.push(a[a.length-1]);out.pop();return out;
+    }
+    function smoothRing(points,passes=3){const step=(a,f)=>a.map((p,i)=>{const before=a[(i+a.length-1)%a.length],after=a[(i+1)%a.length];return[p[0]+f*((before[0]+after[0])/2-p[0]),p[1]+f*((before[1]+after[1])/2-p[1])]});let a=points;for(let n=0;n<passes;n++){a=step(a,.43);a=step(a,-.44)}return a}
+    function extrudedGeometryFromMask(mask){
+      const modelW=+ui.width.value,totalDepth=+ui.depth.value,bevel=Math.min(+ui.bevel.value,totalDepth*.46),bevelDepth=Math.max(0,totalDepth/2-Math.min(.05,totalDepth*.08)),coreDepth=Math.max(.03,totalDepth-2*bevelDepth),spanW=mask.maxX-mask.minX+1,spanH=mask.maxY-mask.minY+1,cell=Math.max(.001,modelW-2*bevel)/spanW,centerX=(mask.minX+mask.maxX+1)/2,centerY=(mask.minY+mask.maxY+1)/2,result=makeContours().size([mask.w,mask.h]).smooth(true).thresholds([.5])(mask.field)[0],polygons=result?.coordinates||[],shapes=[];
+      const convert=ring=>{let points=ring;if(points.length>1&&points[0][0]===points.at(-1)[0]&&points[0][1]===points.at(-1)[1])points=points.slice(0,-1);points=smoothRing(points,3);points=simplifyRing(points,.22);return points.map(([x,y])=>new THREE.Vector2((x-centerX)*cell,(centerY-y)*cell))};
+      const valid=points=>points.length>=3&&Math.abs(THREE.ShapeUtils.area(points))>cell*cell*.02;
+      for(const polygon of polygons){if(!polygon[0]||polygon[0].length<4)continue;let outer=convert(polygon[0]);if(!valid(outer))continue;if(!THREE.ShapeUtils.isClockWise(outer))outer.reverse();const shape=new THREE.Shape(outer);for(const ring of polygon.slice(1)){let hole=convert(ring);if(!valid(hole))continue;if(THREE.ShapeUtils.isClockWise(hole))hole.reverse();shape.holes.push(new THREE.Path(hole))}shapes.push(shape)}
+      if(!shapes.length)return null;const geo=new THREE.ExtrudeGeometry(shapes,{depth:coreDepth,steps:1,curveSegments:12,bevelEnabled:true,bevelThickness:bevelDepth,bevelSize:bevel,bevelOffset:0,bevelSegments:16});geo.translate(0,0,bevelDepth);geo.computeVertexNormals();return{geo,triangles:geo.attributes.position.count/3,height:spanH*cell,edgeWidth:bevel,axial:bevelDepth};
+    }
+
     function geometryFromMask(mask){
+      if(new URLSearchParams(location.search).has('extrude'))return extrudedGeometryFromMask(mask);
       const quality=+ui.resolution.value>=1100?680:+ui.resolution.value>=800?560:460,g=resample(mask,quality);if(g.maxX<0)return null;
       const dist2=distanceInside(g.binary,g.w,g.h),modelW=+ui.width.value,totalDepth=+ui.depth.value,spanW=g.maxX-g.minX+1,spanH=g.maxY-g.minY+1,cell=modelW/spanW,centerX=(g.minX+g.maxX)/2,centerY=(g.minY+g.maxY)/2,half=totalDepth/2;
       const style=ui.edgeStyle.value,edgeWidth=style==='flat'?0:style==='soft'?Math.min(+ui.bevel.value*.55,half*.8):Math.min(+ui.bevel.value,Math.max(.2,modelW*.025));
