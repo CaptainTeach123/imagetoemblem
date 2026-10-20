@@ -12,8 +12,9 @@ For textured or colored backgrounds, choose **Remove sampled background** and cl
 
 - Runs entirely in the browser; images are never uploaded.
 - Supports background-color removal and light/dark thresholding.
-- Cleans isolated edge noise with configurable majority-filter passes.
-- Builds closed top, bottom, and boundary surfaces in millimeters.
+- Traces the raster mask into closed vector contours at up to 700 px resolution.
+- Smooths curves geometrically while preserving disconnected pieces and internal openings.
+- Builds closed top, bottom, rounded bevel, and boundary surfaces in millimeters.
 - Provides an interactive Three.js preview and binary STL export.
 
 ## Printing notes
