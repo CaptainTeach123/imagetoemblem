@@ -80,9 +80,33 @@
     function morph(m,w,h,radius,dilate){const tmp=new Uint8Array(m.length),out=new Uint8Array(m.length);for(let y=0;y<h;y++)for(let x=0;x<w;x++){let v=dilate?0:1;for(let d=-radius;d<=radius;d++){const xx=Math.max(0,Math.min(w-1,x+d));v=dilate?Math.max(v,m[y*w+xx]):Math.min(v,m[y*w+xx])}tmp[y*w+x]=v}for(let y=0;y<h;y++)for(let x=0;x<w;x++){let v=dilate?0:1;for(let d=-radius;d<=radius;d++){const yy=Math.max(0,Math.min(h-1,y+d));v=dilate?Math.max(v,tmp[yy*w+x]):Math.min(v,tmp[yy*w+x])}out[y*w+x]=v}return out}
     function fillTinyHoles(m,w,h,maxArea){const seen=new Uint8Array(m.length),out=m.slice(),queue=[],steps=[[1,0],[-1,0],[0,1],[0,-1]];for(let i=0;i<m.length;i++)if(!m[i]&&!seen[i]){seen[i]=1;queue.length=0;queue.push(i);const cells=[];let border=false;for(let p=0;p<queue.length;p++){const v=queue[p],x=v%w,y=(v/w)|0;cells.push(v);if(x===0||y===0||x===w-1||y===h-1)border=true;for(const [dx,dy] of steps){const xx=x+dx,yy=y+dy;if(xx<0||xx>=w||yy<0||yy>=h)continue;const q=yy*w+xx;if(!m[q]&&!seen[q]){seen[q]=1;queue.push(q)}}}if(!border&&cells.length<=maxArea)for(const v of cells)out[v]=1}return out}
     function smoothField(m,w,h,passes){let a=Float32Array.from(m),tmp=new Float32Array(a.length),b=new Float32Array(a.length);for(let pass=0;pass<passes;pass++){for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x,l=a[y*w+Math.max(0,x-1)],r=a[y*w+Math.min(w-1,x+1)];tmp[i]=(l+2*a[i]+r)/4}for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x,u=tmp[Math.max(0,y-1)*w+x],d=tmp[Math.min(h-1,y+1)*w+x];b[i]=(u+2*tmp[i]+d)/4}[a,b]=[b,a]}return a}
-    function makeMask(){const max=+ui.resolution.value,aspect=source.naturalWidth/source.naturalHeight,w=aspect>=1?max:Math.round(max*aspect),h=aspect>=1?Math.round(max/aspect):max;work.width=w;work.height=h;const ctx=work.getContext('2d',{willReadFrequently:true});ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(source,0,0,w,h);const data=ctx.getImageData(0,0,w,h).data,t=+ui.threshold.value/100,mode=ui.mode.value,color=new Uint8Array(w*h),metal=new Uint8Array(w*h),simple=new Uint8Array(w*h);let bgMax=Math.max(...bg),bgMin=Math.min(...bg),bgSat=bgMax?(bgMax-bgMin)/bgMax:0;
-      for(let i=0;i<color.length;i++){const r=data[i*4],g=data[i*4+1],b=data[i*4+2],a=data[i*4+3]/255,lum=(.2126*r+.7152*g+.0722*b)/255,maxc=Math.max(r,g,b),minc=Math.min(r,g,b),sat=maxc?((maxc-minc)/maxc):0,dist=Math.hypot(r-bg[0],g-bg[1],b-bg[2])/441.7,visible=a>.1;color[i]=(dist>t&&visible)?1:0;metal[i]=(sat<.80&&lum>.02&&visible)?1:0;let on=mode==='dark'?lum<t:mode==='light'?lum>1-t:false;simple[i]=((inverted?!on:on)&&visible)?1:0}
-      let m,symmetry=0,noise=+ui.noise.value/100;if(mode==='auto'&&!inverted){const colorClean=majority(color,w,h),s=symmetricMask(colorClean,w,h);symmetry=s.ratio;let metalClean=morph(metal,w,h,Math.max(1,Math.round(w/420)),true);metalClean=removeNoise(metalClean,w,h,noise);if(symmetry>=.65){const symClean=removeNoise(s.mask,w,h,noise),union=new Uint8Array(color.length);for(let i=0;i<union.length;i++)union[i]=symClean[i]||metalClean[i]?1:0;m=new Uint8Array(union.length);for(let y=0;y<h;y++)for(let x=0;x<w;x++)m[y*w+x]=union[y*w+x]&&union[y*w+(w-1-x)]?1:0;m=morph(morph(m,w,h,1,true),w,h,1,false);m=removeNoise(m,w,h,noise);m=fillTinyHoles(m,w,h,w*h*.0001)}else m=bgSat>.65?metalClean:removeNoise(colorClean,w,h,noise)}else if(mode==='color'||(mode==='auto'&&inverted)){m=color;if(inverted){for(let i=0;i<m.length;i++)m[i]=data[i*4+3]>.1?(m[i]?0:1):0}m=removeNoise(m,w,h,noise)}else if(mode==='metal'){m=morph(metal,w,h,Math.max(1,Math.round(w/420)),true);m=removeNoise(m,w,h,noise)}else{m=simple;m=removeNoise(m,w,h,noise)}const field=smoothField(m,w,h,+ui.smooth.value);return {m,field,w,h,symmetry};
+    function makeMask(){
+      const max=+ui.resolution.value,aspect=source.naturalWidth/source.naturalHeight,w=aspect>=1?max:Math.round(max*aspect),h=aspect>=1?Math.round(max/aspect):max;
+      work.width=w;work.height=h;const ctx=work.getContext('2d',{willReadFrequently:true});ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(source,0,0,w,h);
+      const data=ctx.getImageData(0,0,w,h).data,t=+ui.threshold.value/100,mode=ui.mode.value,color=new Uint8Array(w*h),metal=new Uint8Array(w*h),simple=new Uint8Array(w*h),bgMax=Math.max(...bg),bgMin=Math.min(...bg),bgSat=bgMax?(bgMax-bgMin)/bgMax:0;
+      for(let i=0;i<color.length;i++){
+        const r=data[i*4],g=data[i*4+1],b=data[i*4+2],a=data[i*4+3]/255,lum=(.2126*r+.7152*g+.0722*b)/255,maxc=Math.max(r,g,b),minc=Math.min(r,g,b),sat=maxc?((maxc-minc)/maxc):0,dist=Math.hypot(r-bg[0],g-bg[1],b-bg[2])/441.7,visible=a>.1;
+        color[i]=(dist>t&&visible)?1:0;metal[i]=(sat<.80&&lum>.02&&visible)?1:0;const on=mode==='dark'?lum<t:mode==='light'?lum>1-t:false;simple[i]=((inverted?!on:on)&&visible)?1:0;
+      }
+      let m,symmetry=0;const noise=+ui.noise.value/100;
+      if(mode==='auto'&&!inverted){
+        const colorClean=majority(color,w,h),s=symmetricMask(colorClean,w,h);symmetry=s.ratio;let metalClean=morph(metal,w,h,Math.max(1,Math.round(w/420)),true);metalClean=removeNoise(metalClean,w,h,noise);
+        if(symmetry>=.65){
+          const symClean=removeNoise(s.mask,w,h,noise),nearMetal=morph(metalClean,w,h,Math.max(4,Math.round(w/58)),true),union=new Uint8Array(color.length);
+          for(let i=0;i<union.length;i++)union[i]=metalClean[i]||(symClean[i]&&nearMetal[i])?1:0;
+          m=new Uint8Array(union.length);for(let y=0;y<h;y++)for(let x=0;x<w;x++)m[y*w+x]=union[y*w+x]&&union[y*w+(w-1-x)]?1:0;
+          m=morph(morph(m,w,h,1,true),w,h,1,false);m=removeNoise(m,w,h,noise);m=fillTinyHoles(m,w,h,w*h*.0001);
+          const seamLeft=(w-1)>>1,seamRight=w>>1;let seamEvidence=0;for(let y=0;y<h;y++)seamEvidence+=metalClean[y*w+seamLeft]+metalClean[y*w+seamRight];
+          if(!seamEvidence)for(let y=0;y<h;y++){m[y*w+seamLeft]=0;m[y*w+seamRight]=0}
+        }else m=bgSat>.65?metalClean:removeNoise(colorClean,w,h,noise);
+      }else if(mode==='color'||(mode==='auto'&&inverted)){
+        m=color;if(inverted)for(let i=0;i<m.length;i++)m[i]=data[i*4+3]>25?(m[i]?0:1):0;m=removeNoise(m,w,h,noise);
+      }else if(mode==='metal'){
+        m=morph(metal,w,h,Math.max(1,Math.round(w/420)),true);m=removeNoise(m,w,h,noise);
+      }else{
+        m=simple;m=removeNoise(m,w,h,noise);
+      }
+      const field=smoothField(m,w,h,+ui.smooth.value);return {m,field,w,h,symmetry};
     }
     function simplify(points,eps=.32){const sq=eps*eps,dist=(p,a,b)=>{let x=a[0],y=a[1],dx=b[0]-x,dy=b[1]-y;if(dx||dy){const t=Math.max(0,Math.min(1,((p[0]-x)*dx+(p[1]-y)*dy)/(dx*dx+dy*dy)));x+=dx*t;y+=dy*t}dx=p[0]-x;dy=p[1]-y;return dx*dx+dy*dy};function rdp(a,first,last,out){let max=sq,at=0;for(let i=first+1;i<last;i++){const d=dist(a[i],a[first],a[last]);if(d>max){at=i;max=d}}if(at){if(at-first>1)rdp(a,first,at,out);out.push(a[at]);if(last-at>1)rdp(a,at,last,out)}}const a=[...points,points[0]],out=[a[0]];rdp(a,0,a.length-1,out);out.push(a[a.length-1]);out.pop();return out}
     function chaikin(points,passes){let a=points;for(let n=0;n<passes;n++){const b=[];for(let i=0;i<a.length;i++){const p=a[i],q=a[(i+1)%a.length];b.push([p[0]*.75+q[0]*.25,p[1]*.75+q[1]*.25],[p[0]*.25+q[0]*.75,p[1]*.25+q[1]*.75])}a=b}return a}
