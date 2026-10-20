@@ -246,6 +246,14 @@
       }
       return a;
     }
+    function regularizeMask(m,w,h,passes){
+      if(passes<=0)return null;const wantedBodies=components(m,w,h).filter(g=>g.length>=8).length,wantedHoles=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length,sourceField=Float32Array.from(m),contour=makeContours().size([w,h]).smooth(true).thresholds([.5])(sourceField)[0];if(!contour)return null;
+      for(let amount=passes;amount>0;amount--){const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d');ctx.clearRect(0,0,w,h);ctx.fillStyle='#fff';
+        for(const polygon of contour.coordinates||[]){const path=new Path2D();for(const ring of polygon){let points=ring;if(points.length>1&&points[0][0]===points.at(-1)[0]&&points[0][1]===points.at(-1)[1])points=points.slice(0,-1);points=smoothRing(points,amount);if(points.length<3)continue;path.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)path.lineTo(points[i][0],points[i][1]);path.closePath()}ctx.fill(path,'evenodd')}
+        const pixels=ctx.getImageData(0,0,w,h).data,field=new Float32Array(m.length),binary=new Uint8Array(m.length);for(let i=0;i<binary.length;i++){field[i]=pixels[i*4+3]/255;binary[i]=field[i]>=.5?1:0}const bodies=components(binary,w,h).filter(g=>g.length>=8).length,holes=components(binary,w,h,0).filter(g=>!g.border&&g.length>=8).length;if(bodies===wantedBodies&&holes===wantedHoles)return{m:binary,field}
+      }
+      return null;
+    }
     function maskBounds(m,w,h){let minX=w,minY=h,maxX=-1,maxY=-1;for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(m[y*w+x]){minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y)}return {minX,minY,maxX,maxY}}
     function cleanupRatio(){return ui.cleanup.value==='low'?.00035:ui.cleanup.value==='high'?.006:.001}
 
@@ -269,8 +277,9 @@
           m=union;const closeRadius=Math.max(1,Math.round(w/300));m=diskMorph(diskMorph(m,w,h,closeRadius,true),w,h,closeRadius,false);m=removeNoise(m,w,h,ratio,telemetry);m=fillUnprotectedHoles(m,protectedHoles,w,h);m=fillTinyHoles(m,w,h,10);
           if(!seamEvidence){const pad=Math.max(1,Math.round(w/700));for(let y=0;y<h;y++)for(let x=Math.max(0,seamLeft-pad);x<=Math.min(w-1,seamRight+pad);x++)m[y*w+x]=0}
           m=removeNoise(m,w,h,ratio,telemetry);
-          const passes=Math.max(1,Math.round(+ui.smooth.value/3)),fgField=gaussianField(m,w,h,passes),holeField=gaussianField(protectedHoles,w,h,passes),field=new Float32Array(m.length),finalMask=new Uint8Array(m.length);
+          const passes=Math.max(1,Math.round(+ui.smooth.value/3)),fgField=gaussianField(m,w,h,passes),holeField=gaussianField(protectedHoles,w,h,passes);let field=new Float32Array(m.length);const finalMask=new Uint8Array(m.length);
           for(let i=0;i<field.length;i++){field[i]=Math.min(fgField[i],1-holeField[i]);finalMask[i]=field[i]>=.5?1:0}m=removeNoise(finalMask,w,h,ratio,telemetry);for(let i=0;i<field.length;i++)if(!m[i]&&field[i]>=.5)field[i]=0;
+          const regular=regularizeMask(m,w,h,Math.max(0,Math.round(+ui.smooth.value/2)));if(regular){m=regular.m;field=regular.field}
           const bounds=maskBounds(m,w,h);if(bounds.maxX<0)return null;const bodies=components(m,w,h).filter(g=>g.length>=8).length,holes=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length;
           return {m,field,w,h,symmetry,bodies,holes,removed:telemetry.removed,...bounds};
         }else m=bgSat>.55?detail:removeNoise(colorClean,w,h,ratio,telemetry);
