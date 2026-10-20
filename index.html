@@ -60,7 +60,7 @@
           <button class="preset" data-preset="silhouette">Clean silhouette</button>
           <button class="preset" data-preset="line">Line art</button>
         </div>
-        <div class="control"><label for="threshold">Background range</label><output id="thresholdOut">18%</output><input id="threshold" type="range" min="3" max="55" value="18"><small>Higher removes more of the background.</small></div>
+        <div class="control"><label for="threshold">Background range</label><output id="thresholdOut">22%</output><input id="threshold" type="range" min="3" max="55" value="22"><small>Higher removes more of the background.</small></div>
         <div class="control"><label for="cleanup">Speck cleanup</label><output></output><select id="cleanup"><option value="low">Low — keep tiny details</option><option value="medium" selected>Medium — recommended</option><option value="high">High — remove more texture</option></select></div>
         <div class="buttonRow"><button class="secondary" id="pickBg">Pick background</button><button class="primary" id="useCutout" disabled>Use this cutout</button></div>
         <div class="maskNote" id="maskNote">Upload an image to see exactly what will become the model.</div>
@@ -157,7 +157,7 @@
     Object.values(ui).forEach(el=>el.addEventListener('input',()=>{labels();schedule(false)}));
 
     const presets={
-      ornamental:{mode:'auto',threshold:18,cleanup:'medium',resolution:900,smooth:6},
+      ornamental:{mode:'auto',threshold:22,cleanup:'medium',resolution:900,smooth:6},
       silhouette:{mode:'color',threshold:28,cleanup:'low',resolution:800,smooth:3},
       line:{mode:'dark',threshold:22,cleanup:'low',resolution:1200,smooth:2}
     };
@@ -228,6 +228,9 @@
       return protectedMask;
     }
     function fillTinyHoles(m,w,h,maxArea){const out=m.slice();for(const g of components(m,w,h,0))if(!g.border&&g.length<=maxArea)for(const i of g)out[i]=1;return out}
+    function fillUnprotectedHoles(m,protectedMask,w,h){
+      const out=m.slice();for(const group of components(m,w,h,0)){if(group.border)continue;let keep=false;for(const i of group)if(protectedMask[i]){keep=true;break}if(!keep)for(const i of group)out[i]=1}return out;
+    }
     function gaussianField(m,w,h,passes){
       const kernel=[1,4,6,4,1],norm=16;let a=Float32Array.from(m),tmp=new Float32Array(a.length),b=new Float32Array(a.length);
       for(let pass=0;pass<passes;pass++){
@@ -256,11 +259,11 @@
         if(symmetry>=.62){
           const symClean=removeNoise(sym.mask,w,h,ratio,telemetry),near=morph(detail,w,h,Math.max(8,Math.round(w*.018)),true),union=new Uint8Array(w*h);
           for(let i=0;i<union.length;i++)union[i]=detail[i]||(symClean[i]&&near[i])?1:0;
-          m=mirrorIntersection(union,w,h);m=morph(morph(m,w,h,1,true),w,h,1,false);m=removeNoise(m,w,h,ratio,telemetry);m=fillTinyHoles(m,w,h,Math.max(6,w*h*.00005));
+          m=mirrorIntersection(union,w,h);m=morph(morph(m,w,h,1,true),w,h,1,false);m=removeNoise(m,w,h,ratio,telemetry);m=fillUnprotectedHoles(m,protectedHoles,w,h);m=fillTinyHoles(m,w,h,Math.max(6,w*h*.00005));
           if(!seamEvidence){const pad=Math.max(1,Math.round(w/700));for(let y=0;y<h;y++)for(let x=Math.max(0,seamLeft-pad);x<=Math.min(w-1,seamRight+pad);x++)m[y*w+x]=0}
           m=removeNoise(m,w,h,ratio,telemetry);
           const passes=Math.max(1,Math.round(+ui.smooth.value/3)),fgField=gaussianField(m,w,h,passes),holeField=gaussianField(protectedHoles,w,h,passes),field=new Float32Array(m.length),finalMask=new Uint8Array(m.length);
-          for(let i=0;i<field.length;i++){field[i]=Math.min(fgField[i],1-holeField[i]);finalMask[i]=field[i]>=.5?1:0}m=removeNoise(finalMask,w,h,ratio,telemetry);
+          for(let i=0;i<field.length;i++){field[i]=Math.min(fgField[i],1-holeField[i]);finalMask[i]=field[i]>=.5?1:0}m=removeNoise(finalMask,w,h,ratio,telemetry);for(let i=0;i<field.length;i++)if(!m[i]&&field[i]>=.5)field[i]=0;
           const bounds=maskBounds(m,w,h);if(bounds.maxX<0)return null;const bodies=components(m,w,h).filter(g=>g.length>=8).length,holes=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length;
           return {m,field,w,h,symmetry,bodies,holes,removed:telemetry.removed,...bounds};
         }else m=bgSat>.55?detail:removeNoise(colorClean,w,h,ratio,telemetry);
