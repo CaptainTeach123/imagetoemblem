@@ -276,7 +276,7 @@
       const darkChrome=bgLum<.13&&bgSat<.30&&neutralHighlights>luminance.length*.008,chromeWeak=.030+t*.055;
       for(let i=0;i<color.length;i++){
         const r=data[i*4],g=data[i*4+1],b=data[i*4+2],a=data[i*4+3]/255,lum=luminance[i],maxc=Math.max(r,g,b),minc=Math.min(r,g,b),sat=maxc?(maxc-minc)/maxc:0,dist=Math.hypot(r-bg[0],g-bg[1],b-bg[2])/441.7,visible=a>.08;
-        color[i]=dist>t&&visible?1:0;metal[i]=(darkChrome?((lum-rowBg[(i/w)|0]>chromeWeak)&&(sat<.42||lum>.82)):((sat<.80&&lum>.02)||lum>.88))&&visible?1:0;redLike[i]=sat>.65&&r>1.2*g&&r>.95*b?1:0;const on=mode==='dark'?lum<t:mode==='light'?lum>1-t:false;simple[i]=(inverted?!on:on)&&visible?1:0;
+        color[i]=dist>t&&visible?1:0;metal[i]=(darkChrome?((Math.abs(lum-rowBg[(i/w)|0])>chromeWeak)&&(sat<.42||lum>.82)):((sat<.80&&lum>.02)||lum>.88))&&visible?1:0;redLike[i]=sat>.65&&r>1.2*g&&r>.95*b?1:0;const on=mode==='dark'?lum<t:mode==='light'?lum>1-t:false;simple[i]=(inverted?!on:on)&&visible?1:0;
       }
       const ratio=cleanupRatio();let m,symmetry=0;
       if(mode==='auto'&&!inverted){
