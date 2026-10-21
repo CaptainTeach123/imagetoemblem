@@ -449,7 +449,7 @@
         widthCache.set(blended)
       }
       for(const p of samples){
-        const d=continuousDistance(p.v),w=p.v.id>=0?widthCache[p.v.id]:edgeWidth,s=w>0?Math.max(0,Math.min(1,d/w)):1,profile=style==='reference'?referenceProfile(s):style==='soft'?s*s*(3-2*s):1,localRise=style==='reference'?Math.min(bevelRise,w*.52):bevelRise,baseZ=edgeWidth>0?coreHalf+localRise*profile:half;
+        const d=continuousDistance(p.v),w=p.v.id>=0?widthCache[p.v.id]:edgeWidth,s=w>0?Math.max(0,Math.min(1,d/w)):1,profile=style==='reference'?referenceProfile(s):style==='soft'?s*s*(3-2*s):1,edgeRise=style==='reference'?Math.min(bevelRise,w*.52):bevelRise,faceBlend=style==='reference'?smooth01(.58,.96,s):0,localRise=edgeRise+(bevelRise-edgeRise)*faceBlend,baseZ=edgeWidth>0?coreHalf+localRise*profile:half;
         // Fade relief into the inner half of the chamfer itself.  The former
         // full-height guard ring produced a second shoulder around every hole.
         const gate=reliefDepth?smooth01(.56,.98,s):0,rv=g.relief?bilinear(g.relief,g.w,g.h,p.v.x,p.v.y):1;
