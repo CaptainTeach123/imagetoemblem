@@ -70,15 +70,15 @@
         <div class="stepHead"><span class="stepNo">3</span><strong>Set print size</strong></div>
         <div class="control"><label for="width">Width</label><output id="widthOut">80 mm</output><input id="width" type="range" min="20" max="200" value="80"></div>
         <div class="control"><label for="depth">Thickness</label><output id="depthOut">2.5 mm</output><input id="depth" type="range" min="1" max="12" value="2.5" step="0.1"></div>
-        <div class="control"><label for="edgeStyle">Edge</label><output></output><select id="edgeStyle"><option value="reference" selected>Reference-style smooth bevel — recommended</option><option value="soft">Gentle rounded bevel</option><option value="flat">Flat edge</option></select></div>
+        <div class="control"><label for="edgeStyle">Edge</label><output></output><select id="edgeStyle"><option value="reference" selected>Blended chamfer — recommended</option><option value="soft">Gentle rounded bevel</option><option value="flat">Flat edge</option></select></div>
         <details>
           <summary>Advanced settings</summary>
           <div class="advanced">
             <div class="control"><label for="mode">Detection method</label><output></output><select id="mode"><option value="auto">Automatic emblem isolation</option><option value="color">Remove sampled background</option><option value="metal">Metal / low-saturation artwork</option><option value="dark">Keep darker areas</option><option value="light">Keep lighter areas</option></select></div>
             <div class="control"><label for="resolution">Trace quality</label><output id="resolutionOut">1200 px</output><input id="resolution" type="range" min="400" max="1200" value="1200" step="100"></div>
             <div class="control"><label for="smooth">Curve cleanup</label><output id="smoothOut">3</output><input id="smooth" type="range" min="0" max="10" value="3"></div>
-            <div class="control"><label for="bevel">Bevel width</label><output id="bevelOut">1.6 mm</output><input id="bevel" type="range" min="0.2" max="3.0" value="1.6" step="0.1"><small>Higher makes the rounded edge wider across the face.</small></div>
-            <div class="control"><label for="relief">Surface detail</label><output id="reliefOut">85%</output><input id="relief" type="range" min="0" max="100" value="85" step="5"><small>Keeps coherent ridges and facets from reflective artwork without embossing background noise.</small></div>
+            <div class="control"><label for="bevel">Chamfer width</label><output id="bevelOut">1.5 mm</output><input id="bevel" type="range" min="0.2" max="3.0" value="1.5" step="0.1"><small>Higher carries the smooth chamfer farther across the face.</small></div>
+            <div class="control"><label for="relief">Optional surface relief</label><output id="reliefOut">0%</output><input id="relief" type="range" min="0" max="100" value="0" step="5"><small>Use sparingly: reflections in metallic artwork are often lighting, not real surface geometry.</small></div>
             <button class="secondary" id="invert">Swap kept and removed areas</button>
           </div>
         </details>
@@ -118,8 +118,8 @@
     controls.enableDamping=true;controls.dampingFactor=.08;controls.target.set(0,0,0);
     scene.add(new THREE.HemisphereLight(0xffffff,0x25141b,1.15));
     const key=new THREE.DirectionalLight(0xffffff,2.15);key.position.set(-75,-55,120);scene.add(key);
-    const fill=new THREE.DirectionalLight(0xffd7df,.8);fill.position.set(80,35,65);scene.add(fill);
-    const rim=new THREE.DirectionalLight(0xff3c72,.4);rim.position.set(50,80,12);scene.add(rim);
+    const fill=new THREE.DirectionalLight(0xdbe5ff,.72);fill.position.set(80,35,65);scene.add(fill);
+    const rim=new THREE.DirectionalLight(0xffffff,.26);rim.position.set(50,80,12);scene.add(rim);
     const grid=new THREE.GridHelper(260,26,0x55584f,0x2b2d28);grid.rotation.x=Math.PI/2;grid.position.z=-1.4;scene.add(grid);
 
     let mesh=null,lastGeometry=null,currentMask=null,imageReady=false,inverted=false,pickMode=false,currentView='cutout',activePreset='ornamental',timer=0,firstFit=true,sourceName='artwork';
@@ -160,7 +160,7 @@
     Object.values(ui).forEach(el=>el.addEventListener(el.matches('input[type=range]')?'change':'input',()=>{labels();schedule(false)}));
 
     const presets={
-      ornamental:{mode:'auto',threshold:22,cleanup:'medium',resolution:1200,smooth:3,bevel:1.6,relief:85},
+      ornamental:{mode:'auto',threshold:22,cleanup:'medium',resolution:1200,smooth:3,bevel:1.5,relief:0},
       silhouette:{mode:'color',threshold:28,cleanup:'low',resolution:800,smooth:3,bevel:.4,relief:0},
       line:{mode:'dark',threshold:22,cleanup:'low',resolution:1200,smooth:2,bevel:.4,relief:0}
     };
@@ -340,7 +340,10 @@
 
     function bilinear(a,w,h,x,y){const x0=Math.max(0,Math.min(w-1,Math.floor(x))),y0=Math.max(0,Math.min(h-1,Math.floor(y))),x1=Math.min(w-1,x0+1),y1=Math.min(h-1,y0+1),tx=x-x0,ty=y-y0;return (a[y0*w+x0]*(1-tx)+a[y0*w+x1]*tx)*(1-ty)+(a[y1*w+x0]*(1-tx)+a[y1*w+x1]*tx)*ty}
     function resample(mask,maxWidth){
-      const w=Math.min(maxWidth,mask.w),h=Math.max(3,Math.round(mask.h*w/mask.w)),field=new Float32Array(w*h),binary=new Uint8Array(w*h),relief=mask.relief?new Float32Array(w*h):null,sx=(mask.w-1)/(w-1),sy=(mask.h-1)/(h-1);
+      // Geometry quality is independent of the uploaded raster's short side.
+      // Bilinear upsampling of the antialiased mask gives long portrait edges
+      // enough vertices to remain smooth at a grazing viewing angle.
+      const w=Math.max(3,Math.round(maxWidth)),h=Math.max(3,Math.round(mask.h*w/mask.w)),field=new Float32Array(w*h),binary=new Uint8Array(w*h),relief=mask.relief?new Float32Array(w*h):null,sx=(mask.w-1)/(w-1),sy=(mask.h-1)/(h-1);
       for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x,xx=x*sx,yy=y*sy,v=bilinear(mask.field,mask.w,mask.h,xx,yy);field[i]=v;binary[i]=v>=.5?1:0;if(relief)relief[i]=bilinear(mask.relief,mask.w,mask.h,xx,yy)}
       return {w,h,field,binary,relief,...maskBounds(binary,w,h)};
     }
@@ -375,17 +378,20 @@
       // Honour the requested trace quality even when the uploaded artwork is small.
       // A pixel budget keeps very tall artwork responsive while still giving its
       // perimeter substantially more samples than the source image supplied.
-      const requestedQuality=+ui.resolution.value,aspect=Math.max(.1,mask.h/mask.w),safeQuality=Math.max(400,Math.floor(Math.sqrt(1350000/aspect))),quality=Math.min(requestedQuality,safeQuality),g=resample(mask,quality);if(g.maxX<0)return null;
+      const requestedQuality=+ui.resolution.value,aspect=Math.max(.1,mask.h/mask.w),safeQuality=Math.max(240,Math.floor(Math.sqrt(2200000/aspect))),quality=Math.min(requestedQuality,safeQuality),g=resample(mask,quality);if(g.maxX<0)return null;
       const dist2=distanceInside(g.binary,g.w,g.h),modelW=+ui.width.value,totalDepth=+ui.depth.value,spanW=g.maxX-g.minX+1,spanH=g.maxY-g.minY+1,cell=modelW/spanW,centerX=(g.minX+g.maxX)/2,centerY=(g.minY+g.maxY)/2,half=totalDepth/2;
       const style=ui.edgeStyle.value,requestedEdge=style==='flat'?0:style==='soft'?Math.min(+ui.bevel.value*.55,half*.8):Math.min(+ui.bevel.value,Math.max(.2,modelW*.025)),edgeWidth=requestedEdge;
-      const minimumCore=style==='flat'?half:Math.min(half,Math.max(.04,totalDepth*.02)),bevelRise=style==='flat'?0:Math.min(half-minimumCore,edgeWidth*(style==='soft'?.8:1.8)),coreHalf=half-bevelRise,reliefDepth=g.relief?Math.min(.62,totalDepth*.22)*(+ui.relief.value/100):0;
+      // Keep a visible, printable centre wall.  The reference edge is a shallow
+      // chamfer, not two domed faces meeting at a paper-thin waist.
+      const minimumCore=style==='flat'?half:Math.min(half,Math.max(.22,totalDepth*.14)),bevelRise=style==='flat'?0:Math.min(half-minimumCore,edgeWidth*(style==='soft'?.34:.45)),coreHalf=half-bevelRise,reliefDepth=g.relief?Math.min(.62,totalDepth*.22)*(+ui.relief.value/100):0;
       const positions=[],indices=[],pairs=new Map(),crossings=new Map(),boundary=new Map(),samples=[];
       const base=id=>({key:'g'+id,id,x:id%g.w,y:(id/g.w)|0,value:g.field[id],boundary:Math.abs(g.field[id]-.5)<1e-7});
       function cross(a,b){const lo=Math.min(a.id,b.id),hi=Math.max(a.id,b.id),key='e'+lo+'_'+hi;if(crossings.has(key))return crossings.get(key);const t=(.5-a.value)/(b.value-a.value),v={key,id:-1,x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,value:.5,boundary:true};crossings.set(key,v);return v}
       function clip(poly){const out=[];for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length],insideA=a.value>=.5,insideB=b.value>=.5;if(insideA&&insideB)out.push(b);else if(insideA&&!insideB)out.push(cross(a,b));else if(!insideA&&insideB){out.push(cross(a,b));out.push(b)}}return out.filter((v,i,a)=>!i||v.key!==a[i-1].key)}
-      // Finite-slope C2 roundover.  The former quarter-ellipse had an infinite
-      // derivative at s=0, magnifying sub-pixel contour jitter into visible ribs.
-      function referenceProfile(s){s=Math.max(0,Math.min(1,s));const s2=s*s,s3=s2*s;return s+4*s3-7*s3*s+3*s3*s2}
+      // A single-curvature C2 chamfer: finite at the wall, nearly 45 degrees at
+      // normal settings, then continuously eased into the face.  Unlike the old
+      // S-curve it cannot form a separate-looking ridge inside the edge band.
+      function referenceProfile(s){s=Math.max(0,Math.min(1,s));const s2=s*s,s3=s2*s,s4=s3*s,s5=s4*s,m=2.2;return m*s+(10-6*m)*s3+(8*m-15)*s4+(6-3*m)*s5}
       function pair(v){if(pairs.has(v.key))return pairs.get(v.key);const x=(v.x-centerX)*cell,y=(centerY-v.y)*cell,top=positions.length/3;positions.push(x,y,0);const bottom=positions.length/3;positions.push(x,y,0);const p={top,bottom,v};pairs.set(v.key,p);samples.push(p);return p}
       function area(poly){let a=0;for(let i=0;i<poly.length;i++){const p=poly[i],q=poly[(i+1)%poly.length];a+=(p.x-centerX)*(centerY-q.y)-(q.x-centerX)*(centerY-p.y)}return a/2}
       function addFace(a,b,c){const ax=positions[b*3]-positions[a*3],ay=positions[b*3+1]-positions[a*3+1],az=positions[b*3+2]-positions[a*3+2],bx=positions[c*3]-positions[a*3],by=positions[c*3+1]-positions[a*3+1],bz=positions[c*3+2]-positions[a*3+2],cx=ay*bz-az*by,cy=az*bx-ax*bz,cz=ax*by-ay*bx;if(cx*cx+cy*cy+cz*cz>1e-18)indices.push(a,b,c)}
@@ -410,7 +416,7 @@
         const centreInside=(a.value+b.value+c.value+d.value)*.25>=.5,useAC=(code===5)===centreInside;
         if(useAC){addPolygon(clip([a,b,c]));addPolygon(clip([a,c,d]))}else{addPolygon(clip([a,b,d]));addPolygon(clip([b,c,d]))}
       }
-      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,mask.darkChrome?8:2);
+      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,mask.darkChrome?12:3);
       const segments=[],buckets=new Map(),bevelPixels=edgeWidth>0?edgeWidth/cell:0,bucketSize=Math.max(4,Math.ceil(bevelPixels+2));
       for(const edge of wallSegments){const a=[edge.a.x,edge.a.y],b=[edge.b.x,edge.b.y];if(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8)continue;const index=segments.length;segments.push([a,b]);const bx0=Math.floor(Math.min(a[0],b[0])/bucketSize),bx1=Math.floor(Math.max(a[0],b[0])/bucketSize),by0=Math.floor(Math.min(a[1],b[1])/bucketSize),by1=Math.floor(Math.max(a[1],b[1])/bucketSize);for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){const key=bx+'|'+by;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(index)}}
       const distanceCache=new Float32Array(g.w*g.h),widthCache=new Float32Array(g.w*g.h),seen=new Int32Array(segments.length);distanceCache.fill(-1);widthCache.fill(edgeWidth);let stamp=0;
@@ -426,9 +432,27 @@
         if(style==='reference'&&bestIndex>=0&&d1>.05&&d1<bevelPixels){const search=bevelPixels/.44+2,s2=search*search,mark2=++stamp,ux=q1x-v.x,uy=q1y-v.y;let local=edgeWidth;const ox0=Math.floor((v.x-search)/bucketSize),ox1=Math.floor((v.x+search)/bucketSize),oy0=Math.floor((v.y-search)/bucketSize),oy1=Math.floor((v.y+search)/bucketSize);for(let by=oy0;by<=oy1;by++)for(let bx=ox0;bx<=ox1;bx++)for(const index of buckets.get(bx+'|'+by)||[]){if(index===bestIndex||seen[index]===mark2)continue;seen[index]=mark2;const [a,b]=segments[index],dx=b[0]-a[0],dy=b[1]-a[1],den=dx*dx+dy*dy,t=den?Math.max(0,Math.min(1,((v.x-a[0])*dx+(v.y-a[1])*dy)/den)):0,px=a[0]+t*dx,py=a[1]+t*dy,rx=px-v.x,ry=py-v.y,d2sq=rx*rx+ry*ry;if(d2sq<.0225||d2sq>s2)continue;const d2=Math.sqrt(d2sq),opposition=-(ux*rx+uy*ry)/(d1*d2);if(opposition<=.35)continue;if(bilinear(g.field,g.w,g.h,v.x+rx*.25,v.y+ry*.25)<.48||bilinear(g.field,g.w,g.h,v.x+rx*.5,v.y+ry*.5)<.48||bilinear(g.field,g.w,g.h,v.x+rx*.75,v.y+ry*.75)<.48)continue;const chord=Math.hypot(px-q1x,py-q1y),tOpp=Math.min(1,(opposition-.35)/.3),weight=tOpp*tOpp*(3-2*tOpp),target=Math.min(edgeWidth,Math.max(cell*1.5,chord*cell*.44));local=Math.min(local,edgeWidth-weight*(edgeWidth-target))}widthCache[v.id]=local}
         return distanceCache[v.id]=Math.min(edgeWidth,Math.max(0,d1*cell));
       }
+      // continuousDistance also discovers locally safe chamfer widths.  Compute
+      // the whole field first, then apply a conservative spatial rate limit: it
+      // only lowers neighbouring widths, so fine gaps stay open while abrupt
+      // pinches become a gradual blend.  Diagonal propagation requires an
+      // in-shape bridge and therefore cannot join touching components.
+      const meshSeen=new Uint8Array(g.w*g.h),active=new Uint8Array(g.w*g.h);
+      for(const p of samples)if(p.v.id>=0&&!meshSeen[p.v.id]){meshSeen[p.v.id]=1;continuousDistance(p.v)}
+      if(style==='reference'&&edgeWidth>0){
+        const blended=widthCache.slice(),step=cell*.65,diag=step*Math.SQRT2,W=g.w,H=g.h;
+        for(let pass=0;pass<2;pass++){
+          active.fill(0);for(let id=0;id<meshSeen.length;id++)if(meshSeen[id]&&distanceCache[id]>=0&&distanceCache[id]<edgeWidth-1e-6)active[id]=1;
+          for(let y=0;y<H;y++)for(let x=0;x<W;x++){const id=y*W+x;if(!active[id])continue;let w=blended[id];if(x&&active[id-1])w=Math.min(w,blended[id-1]+step);if(y&&active[id-W])w=Math.min(w,blended[id-W]+step);if(x&&y&&active[id-W-1]&&(active[id-1]||active[id-W]))w=Math.min(w,blended[id-W-1]+diag);if(x+1<W&&y&&active[id-W+1]&&(active[id+1]||active[id-W]))w=Math.min(w,blended[id-W+1]+diag);blended[id]=w}
+          for(let y=H-1;y>=0;y--)for(let x=W-1;x>=0;x--){const id=y*W+x;if(!active[id])continue;let w=blended[id];if(x+1<W&&active[id+1])w=Math.min(w,blended[id+1]+step);if(y+1<H&&active[id+W])w=Math.min(w,blended[id+W]+step);if(x+1<W&&y+1<H&&active[id+W+1]&&(active[id+1]||active[id+W]))w=Math.min(w,blended[id+W+1]+diag);if(x&&y+1<H&&active[id+W-1]&&(active[id-1]||active[id+W]))w=Math.min(w,blended[id+W-1]+diag);blended[id]=w}
+        }
+        widthCache.set(blended)
+      }
       for(const p of samples){
-        const d=continuousDistance(p.v),w=p.v.id>=0?widthCache[p.v.id]:edgeWidth,s=w>0?Math.max(0,Math.min(1,d/w)):1,profile=style==='reference'?referenceProfile(s):style==='soft'?s*s*(3-2*s):1,baseZ=edgeWidth>0?coreHalf+bevelRise*profile:half;
-        const inside=p.v.id>=0?Math.max(0,(Math.sqrt(dist2[p.v.id])-.5)*cell):0,guard=w+Math.max(.18,cell*2.5),fade=Math.max(.38,cell*4),gate=reliefDepth?smooth01(guard,guard+fade,inside):0,rv=g.relief?bilinear(g.relief,g.w,g.h,p.v.x,p.v.y):1;
+        const d=continuousDistance(p.v),w=p.v.id>=0?widthCache[p.v.id]:edgeWidth,s=w>0?Math.max(0,Math.min(1,d/w)):1,profile=style==='reference'?referenceProfile(s):style==='soft'?s*s*(3-2*s):1,localRise=style==='reference'?Math.min(bevelRise,w*.52):bevelRise,baseZ=edgeWidth>0?coreHalf+localRise*profile:half;
+        // Fade relief into the inner half of the chamfer itself.  The former
+        // full-height guard ring produced a second shoulder around every hole.
+        const gate=reliefDepth?smooth01(.56,.98,s):0,rv=g.relief?bilinear(g.relief,g.w,g.h,p.v.x,p.v.y):1;
         positions[p.top*3+2]=baseZ-reliefDepth*gate*(1-rv);positions[p.bottom*3+2]=-baseZ;
       }
       for(const seg of wallSegments){const a=pair(seg.a),b=pair(seg.b);addFace(a.top,a.bottom,b.bottom);addFace(a.top,b.bottom,b.top)}
@@ -447,7 +471,7 @@
       if(!mask){$('busy').hidden=true;$('export').disabled=true;$('useCutout').disabled=true;$('maskNote').className='maskNote warn';$('maskNote').innerHTML='<b>Nothing is selected.</b> Lower Background range or choose another preset.';return}
       currentMask=mask;drawCutout(mask);updateMaskMessage(mask);const out=geometryFromMask(mask);
       if(mesh){scene.remove(mesh);mesh.geometry.dispose();mesh.material.dispose();mesh=null}if(!out){$('busy').hidden=true;$('export').disabled=true;$('useCutout').disabled=true;return}
-      lastGeometry=out.geo;mesh=new THREE.Mesh(out.geo,new THREE.MeshStandardMaterial({color:0xbfc3c8,metalness:.24,roughness:.52,side:THREE.DoubleSide}));scene.add(mesh);grid.position.z=-(+ui.depth.value/2)-.18;
+      lastGeometry=out.geo;mesh=new THREE.Mesh(out.geo,new THREE.MeshStandardMaterial({color:0xd1d4d8,metalness:.34,roughness:.43,side:THREE.DoubleSide}));scene.add(mesh);grid.position.z=-(+ui.depth.value/2)-.18;
       $('export').disabled=false;$('useCutout').disabled=false;$('busy').hidden=true;
       const height=out.height.toFixed(1);$('stageFoot').title=`${Math.round(out.triangles).toLocaleString()} triangles`;
       if(currentView==='three')$('stageMessage').innerHTML=`<b>${ui.width.value} × ${height} × ${(+ui.depth.value).toFixed(1)} mm</b> • ${mask.bodies} separate ${mask.bodies===1?'piece':'pieces'}`;
