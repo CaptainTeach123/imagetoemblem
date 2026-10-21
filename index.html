@@ -77,7 +77,7 @@
             <div class="control"><label for="mode">Detection method</label><output></output><select id="mode"><option value="auto">Automatic emblem isolation</option><option value="color">Remove sampled background</option><option value="metal">Metal / low-saturation artwork</option><option value="dark">Keep darker areas</option><option value="light">Keep lighter areas</option></select></div>
             <div class="control"><label for="resolution">Trace quality</label><output id="resolutionOut">1200 px</output><input id="resolution" type="range" min="400" max="1200" value="1200" step="100"></div>
             <div class="control"><label for="smooth">Curve cleanup</label><output id="smoothOut">3</output><input id="smooth" type="range" min="0" max="10" value="3"></div>
-            <div class="control"><label for="bevel">Bevel width</label><output id="bevelOut">1.1 mm</output><input id="bevel" type="range" min="0.2" max="2.0" value="1.1" step="0.1"></div>
+            <div class="control"><label for="bevel">Bevel width</label><output id="bevelOut">1.6 mm</output><input id="bevel" type="range" min="0.2" max="3.0" value="1.6" step="0.1"><small>Higher makes the rounded edge wider across the face.</small></div>
             <div class="control"><label for="relief">Surface detail</label><output id="reliefOut">85%</output><input id="relief" type="range" min="0" max="100" value="85" step="5"><small>Keeps coherent ridges and facets from reflective artwork without embossing background noise.</small></div>
             <button class="secondary" id="invert">Swap kept and removed areas</button>
           </div>
@@ -160,7 +160,7 @@
     Object.values(ui).forEach(el=>el.addEventListener(el.matches('input[type=range]')?'change':'input',()=>{labels();schedule(false)}));
 
     const presets={
-      ornamental:{mode:'auto',threshold:22,cleanup:'medium',resolution:1200,smooth:3,bevel:1.1,relief:85},
+      ornamental:{mode:'auto',threshold:22,cleanup:'medium',resolution:1200,smooth:3,bevel:1.6,relief:85},
       silhouette:{mode:'color',threshold:28,cleanup:'low',resolution:800,smooth:3,bevel:.4,relief:0},
       line:{mode:'dark',threshold:22,cleanup:'low',resolution:1200,smooth:2,bevel:.4,relief:0}
     };
@@ -372,7 +372,10 @@
 
     function geometryFromMask(mask){
       if(new URLSearchParams(location.search).has('extrude'))return extrudedGeometryFromMask(mask);
-      const quality=Math.min(mask.w,+ui.resolution.value),g=resample(mask,quality);if(g.maxX<0)return null;
+      // Honour the requested trace quality even when the uploaded artwork is small.
+      // A pixel budget keeps very tall artwork responsive while still giving its
+      // perimeter substantially more samples than the source image supplied.
+      const requestedQuality=+ui.resolution.value,aspect=Math.max(.1,mask.h/mask.w),safeQuality=Math.max(400,Math.floor(Math.sqrt(1350000/aspect))),quality=Math.min(requestedQuality,safeQuality),g=resample(mask,quality);if(g.maxX<0)return null;
       const dist2=distanceInside(g.binary,g.w,g.h),modelW=+ui.width.value,totalDepth=+ui.depth.value,spanW=g.maxX-g.minX+1,spanH=g.maxY-g.minY+1,cell=modelW/spanW,centerX=(g.minX+g.maxX)/2,centerY=(g.minY+g.maxY)/2,half=totalDepth/2;
       const style=ui.edgeStyle.value,requestedEdge=style==='flat'?0:style==='soft'?Math.min(+ui.bevel.value*.55,half*.8):Math.min(+ui.bevel.value,Math.max(.2,modelW*.025)),edgeWidth=requestedEdge;
       const minimumCore=style==='flat'?half:Math.min(half,Math.max(.04,totalDepth*.02)),bevelRise=style==='flat'?0:Math.min(half-minimumCore,edgeWidth*(style==='soft'?.8:1.8)),coreHalf=half-bevelRise,reliefDepth=g.relief?Math.min(.62,totalDepth*.22)*(+ui.relief.value/100):0;
@@ -380,7 +383,9 @@
       const base=id=>({key:'g'+id,id,x:id%g.w,y:(id/g.w)|0,value:g.field[id],boundary:Math.abs(g.field[id]-.5)<1e-7});
       function cross(a,b){const lo=Math.min(a.id,b.id),hi=Math.max(a.id,b.id),key='e'+lo+'_'+hi;if(crossings.has(key))return crossings.get(key);const t=(.5-a.value)/(b.value-a.value),v={key,id:-1,x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,value:.5,boundary:true};crossings.set(key,v);return v}
       function clip(poly){const out=[];for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length],insideA=a.value>=.5,insideB=b.value>=.5;if(insideA&&insideB)out.push(b);else if(insideA&&!insideB)out.push(cross(a,b));else if(!insideA&&insideB){out.push(cross(a,b));out.push(b)}}return out.filter((v,i,a)=>!i||v.key!==a[i-1].key)}
-      function referenceProfile(s){return Math.sqrt(Math.max(0,2*s-s*s))}
+      // Finite-slope C2 roundover.  The former quarter-ellipse had an infinite
+      // derivative at s=0, magnifying sub-pixel contour jitter into visible ribs.
+      function referenceProfile(s){s=Math.max(0,Math.min(1,s));const s2=s*s,s3=s2*s;return s+4*s3-7*s3*s+3*s3*s2}
       function pair(v){if(pairs.has(v.key))return pairs.get(v.key);const x=(v.x-centerX)*cell,y=(centerY-v.y)*cell,top=positions.length/3;positions.push(x,y,0);const bottom=positions.length/3;positions.push(x,y,0);const p={top,bottom,v};pairs.set(v.key,p);samples.push(p);return p}
       function area(poly){let a=0;for(let i=0;i<poly.length;i++){const p=poly[i],q=poly[(i+1)%poly.length];a+=(p.x-centerX)*(centerY-q.y)-(q.x-centerX)*(centerY-p.y)}return a/2}
       function addFace(a,b,c){const ax=positions[b*3]-positions[a*3],ay=positions[b*3+1]-positions[a*3+1],az=positions[b*3+2]-positions[a*3+2],bx=positions[c*3]-positions[a*3],by=positions[c*3+1]-positions[a*3+1],bz=positions[c*3+2]-positions[a*3+2],cx=ay*bz-az*by,cy=az*bx-ax*bz,cz=ax*by-ay*bx;if(cx*cx+cy*cy+cz*cz>1e-18)indices.push(a,b,c)}
@@ -393,8 +398,19 @@
         for(let pass=0;pass<passes;pass++){const sweep=pass&1?[...order].reverse():order;for(const top of sweep){const links=[...(near.get(top)||[])];if(links.length!==2)continue;const p=byTop.get(top),a=byTop.get(links[0]),b=byTop.get(links[1]);if(!p||!a||!b)continue;const ax=a.v.x-p.v.x,ay=a.v.y-p.v.y,bx=b.v.x-p.v.x,by=b.v.y-p.v.y,al=Math.hypot(ax,ay),bl=Math.hypot(bx,by);if(al<1e-6||bl<1e-6)continue;const dot=Math.max(-1,Math.min(1,(ax*bx+ay*by)/(al*bl))),turn=Math.PI-Math.acos(dot),weight=1-smooth01(.50,1.30,turn);if(weight<=0)continue;let dx=((a.v.x+b.v.x)*.5-p.v.x)*.22*weight,dy=((a.v.y+b.v.y)*.5-p.v.y)*.22*weight;const length=Math.hypot(dx,dy),limit=.14;if(length>limit){dx*=limit/length;dy*=limit/length}const oldX=p.v.x,oldY=p.v.y,oldPX=positions[p.top*3],oldPY=positions[p.top*3+1],newX=oldX+dx,newY=oldY+dy,newPX=(newX-centerX)*cell,newPY=(centerY-newY)*cell;p.v.x=newX;p.v.y=newY;positions[p.top*3]=positions[p.bottom*3]=newPX;positions[p.top*3+1]=positions[p.bottom*3+1]=newPY;let valid=true;for(const o of incident.get(top)||[])if(signed(o)<=minimum){valid=false;break}if(!valid){p.v.x=oldX;p.v.y=oldY;positions[p.top*3]=positions[p.bottom*3]=oldPX;positions[p.top*3+1]=positions[p.bottom*3+1]=oldPY}}}
       }
       const x0=Math.max(0,g.minX-2),x1=Math.min(g.w-2,g.maxX+1),y0=Math.max(0,g.minY-2),y1=Math.min(g.h-2,g.maxY+1);
-      for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const a=base(y*g.w+x),b=base(y*g.w+x+1),c=base((y+1)*g.w+x+1),d=base((y+1)*g.w+x);if((x+y)&1){addPolygon(clip([a,b,d]));addPolygon(clip([b,c,d]))}else{addPolygon(clip([a,b,c]));addPolygon(clip([a,c,d]))}}
-      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,mask.darkChrome?4:2);
+      for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
+        const a=base(y*g.w+x),b=base(y*g.w+x+1),c=base((y+1)*g.w+x+1),d=base((y+1)*g.w+x),code=(a.value>=.5?1:0)|(b.value>=.5?2:0)|(c.value>=.5?4:0)|(d.value>=.5?8:0);
+        if(!code)continue;
+        if(code===15){if((x+y)&1){addPolygon([a,b,d]);addPolygon([b,c,d])}else{addPolygon([a,b,c]);addPolygon([a,c,d])};continue}
+        // Ordinary marching-squares cells use only true cell-edge crossings.
+        // This removes the checkerboard diagonal crossing that caused a kink in
+        // every other boundary segment.  Ambiguous saddle cells use the centre
+        // value as an asymptotic decider and retain two topology-safe triangles.
+        if(code!==5&&code!==10){addPolygon(clip([a,b,c,d]));continue}
+        const centreInside=(a.value+b.value+c.value+d.value)*.25>=.5,useAC=(code===5)===centreInside;
+        if(useAC){addPolygon(clip([a,b,c]));addPolygon(clip([a,c,d]))}else{addPolygon(clip([a,b,d]));addPolygon(clip([b,c,d]))}
+      }
+      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,mask.darkChrome?8:2);
       const segments=[],buckets=new Map(),bevelPixels=edgeWidth>0?edgeWidth/cell:0,bucketSize=Math.max(4,Math.ceil(bevelPixels+2));
       for(const edge of wallSegments){const a=[edge.a.x,edge.a.y],b=[edge.b.x,edge.b.y];if(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8)continue;const index=segments.length;segments.push([a,b]);const bx0=Math.floor(Math.min(a[0],b[0])/bucketSize),bx1=Math.floor(Math.max(a[0],b[0])/bucketSize),by0=Math.floor(Math.min(a[1],b[1])/bucketSize),by1=Math.floor(Math.max(a[1],b[1])/bucketSize);for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){const key=bx+'|'+by;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(index)}}
       const distanceCache=new Float32Array(g.w*g.h),widthCache=new Float32Array(g.w*g.h),seen=new Int32Array(segments.length);distanceCache.fill(-1);widthCache.fill(edgeWidth);let stamp=0;
