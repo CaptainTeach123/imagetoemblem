@@ -98,7 +98,7 @@
         <div class="empty" id="empty"><div><b>Your cutout appears here</b>White becomes the model. Transparent areas are removed.</div></div>
         <div class="busy" id="busy" hidden>Building smooth model…</div>
       </div>
-      <div class="stageFoot"><span id="stageMessage"><b>Cutout preview</b> — upload artwork to begin.</span><span id="stageHelp">White becomes the model.</span></div>
+      <div class="stageFoot" id="stageFoot"><span id="stageMessage"><b>Cutout preview</b> — upload artwork to begin.</span><span id="stageHelp">White becomes the model.</span></div>
     </section>
   </main>
   <canvas id="work" hidden></canvas>
@@ -214,14 +214,24 @@
       for(const g of groups)if(g.length>=minimum)for(const i of g)out[i]=1;else removed++;
       if(telemetry)telemetry.removed+=removed;return out;
     }
-    function symmetricMask(m,w,h){
-      const out=new Uint8Array(m.length),radius=Math.max(2,Math.round(w/350));let sourceCount=0,matched=0;for(const v of m)sourceCount+=v;
-      for(let y=0;y<h;y++)for(let x=0;x<Math.ceil(w/2);x++){if(!m[y*w+x])continue;const mx=w-1-x;let hit=false;for(let xx=Math.max(0,mx-radius);xx<=Math.min(w-1,mx+radius);xx++)if(m[y*w+xx]){hit=true;break}if(hit){out[y*w+x]=1;out[y*w+mx]=1;matched+=x===mx?1:2}}
-      return {mask:out,ratio:Math.min(1,matched/Math.max(1,sourceCount))};
+    function maskAxis2(m,w,h){const bounds=maskBounds(m,w,h);return bounds.maxX<0?w-1:bounds.minX+bounds.maxX}
+    function symmetricMask(m,w,h,axis2){
+      const out=new Uint8Array(m.length),radius=Math.max(2,Math.round(w/350));let sourceCount=0,matched=0;
+      for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(m[y*w+x]){sourceCount++;const mx=axis2-x;if(mx<0||mx>=w)continue;let hit=false;for(let xx=Math.max(0,mx-radius);xx<=Math.min(w-1,mx+radius);xx++)if(m[y*w+xx]){hit=true;break}if(hit){matched++;out[y*w+x]=1;out[y*w+mx]=1}}
+      return {mask:out,ratio:matched/Math.max(1,sourceCount)};
     }
-    function mirrorIntersection(m,w,h){const out=new Uint8Array(m.length);for(let y=0;y<h;y++)for(let x=0;x<w;x++)out[y*w+x]=m[y*w+x]&&m[y*w+(w-1-x)]?1:0;return out}
-    function mirrorUnion(m,w,h){const out=new Uint8Array(m.length);for(let y=0;y<h;y++)for(let x=0;x<(w+1)>>1;x++){const i=y*w+x,j=y*w+(w-1-x),v=m[i]||m[j]?1:0;out[i]=out[j]=v}return out}
-    function protectedPairedHoles(detail,redLike,w,h){
+    function mirrorIntersection(m,w,h,axis2){const out=new Uint8Array(m.length);for(let y=0;y<h;y++)for(let x=Math.max(0,axis2-(w-1));x<=Math.min(w-1,Math.floor(axis2/2));x++){const mx=axis2-x,i=y*w+x,j=y*w+mx,v=m[i]&&m[j]?1:0;out[i]=out[j]=v}return out}
+    function mirrorUnion(m,w,h,axis2){const out=m.slice();for(let y=0;y<h;y++)for(let x=Math.max(0,axis2-(w-1));x<=Math.min(w-1,Math.floor(axis2/2));x++){const mx=axis2-x,i=y*w+x,j=y*w+mx,v=m[i]||m[j]?1:0;out[i]=out[j]=v}return out}
+    function rowBackgroundLuminance(data,w,h){
+      const band=Math.max(4,Math.round(w*.055)),raw=new Float32Array(h),out=new Float32Array(h);
+      for(let y=0;y<h;y++){let left=0,right=0;for(let x=0;x<band;x++){let i=(y*w+x)*4;left+=(.2126*data[i]+.7152*data[i+1]+.0722*data[i+2])/255;i=(y*w+w-1-x)*4;right+=(.2126*data[i]+.7152*data[i+1]+.0722*data[i+2])/255}raw[y]=Math.min(left,right)/band}
+      for(let y=0;y<h;y++){let sum=0,n=0;for(let yy=Math.max(0,y-4);yy<=Math.min(h-1,y+4);yy++){sum+=raw[yy];n++}out[y]=sum/n}return out;
+    }
+    function protectedBlackHoles(detail,luminance,rowBg,w,h,darkLimit){
+      const out=new Uint8Array(detail.length),minimum=Math.max(12,Math.round(w*h*.00025));
+      for(const cells of components(detail,w,h,0)){if(cells.border||cells.length<minimum)continue;let trulyBlack=0;for(const i of cells)if(luminance[i]-rowBg[(i/w)|0]<=darkLimit)trulyBlack++;if(trulyBlack/cells.length>=.68)for(const i of cells)out[i]=1}return out;
+    }
+    function protectedPairedHoles(detail,redLike,w,h,axis2){
       const candidates=[];
       for(const cells of components(detail,w,h,0)){
         if(cells.border||cells.length<w*h*.0005)continue;let sx=0,sy=0,red=0;for(const i of cells){sx+=i%w;sy+=(i/w)|0;red+=redLike[i]}
@@ -230,7 +240,7 @@
       const protectedMask=new Uint8Array(detail.length);
       for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++){
         const a=candidates[i],b=candidates[j],areaRatio=a.area/b.area;
-        if(Math.abs(b.cx-(w-1-a.cx))<w*.02&&Math.abs(b.cy-a.cy)<h*.015&&areaRatio>.6&&areaRatio<1.67){for(const p of a.cells)protectedMask[p]=1;for(const p of b.cells)protectedMask[p]=1}
+        if(Math.abs(b.cx-(axis2-a.cx))<w*.02&&Math.abs(b.cy-a.cy)<h*.015&&areaRatio>.6&&areaRatio<1.67){for(const p of a.cells)protectedMask[p]=1;for(const p of b.cells)protectedMask[p]=1}
       }
       return protectedMask;
     }
@@ -260,21 +270,25 @@
     function makeMask(){
       const max=+ui.resolution.value,aspect=source.naturalWidth/source.naturalHeight,w=aspect>=1?max:Math.round(max*aspect),h=aspect>=1?Math.round(max/aspect):max;
       work.width=w;work.height=h;const ctx=work.getContext('2d',{willReadFrequently:true});ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(source,0,0,w,h);
-      const data=ctx.getImageData(0,0,w,h).data,t=+ui.threshold.value/100,mode=ui.mode.value,color=new Uint8Array(w*h),metal=new Uint8Array(w*h),redLike=new Uint8Array(w*h),simple=new Uint8Array(w*h),telemetry={removed:0};
-      const bgMax=Math.max(...bg),bgMin=Math.min(...bg),bgSat=bgMax?(bgMax-bgMin)/bgMax:0;
+      const data=ctx.getImageData(0,0,w,h).data,t=+ui.threshold.value/100,mode=ui.mode.value,color=new Uint8Array(w*h),metal=new Uint8Array(w*h),redLike=new Uint8Array(w*h),simple=new Uint8Array(w*h),luminance=new Float32Array(w*h),telemetry={removed:0};
+      const bgMax=Math.max(...bg),bgMin=Math.min(...bg),bgSat=bgMax?(bgMax-bgMin)/bgMax:0,bgLum=(.2126*bg[0]+.7152*bg[1]+.0722*bg[2])/255,rowBg=rowBackgroundLuminance(data,w,h);let neutralHighlights=0;
+      for(let i=0;i<luminance.length;i++){const r=data[i*4],g=data[i*4+1],b=data[i*4+2],a=data[i*4+3]/255,lum=(.2126*r+.7152*g+.0722*b)/255,maxc=Math.max(r,g,b),minc=Math.min(r,g,b),sat=maxc?(maxc-minc)/maxc:0;luminance[i]=lum;if(a>.08&&sat<.28&&lum-rowBg[(i/w)|0]>.16)neutralHighlights++}
+      const darkChrome=bgLum<.13&&bgSat<.30&&neutralHighlights>luminance.length*.008,chromeWeak=.030+t*.055;
       for(let i=0;i<color.length;i++){
-        const r=data[i*4],g=data[i*4+1],b=data[i*4+2],a=data[i*4+3]/255,lum=(.2126*r+.7152*g+.0722*b)/255,maxc=Math.max(r,g,b),minc=Math.min(r,g,b),sat=maxc?(maxc-minc)/maxc:0,dist=Math.hypot(r-bg[0],g-bg[1],b-bg[2])/441.7,visible=a>.08;
-        color[i]=dist>t&&visible?1:0;metal[i]=((sat<.80&&lum>.02)||lum>.88)&&visible?1:0;redLike[i]=sat>.65&&r>1.2*g&&r>.95*b?1:0;const on=mode==='dark'?lum<t:mode==='light'?lum>1-t:false;simple[i]=(inverted?!on:on)&&visible?1:0;
+        const r=data[i*4],g=data[i*4+1],b=data[i*4+2],a=data[i*4+3]/255,lum=luminance[i],maxc=Math.max(r,g,b),minc=Math.min(r,g,b),sat=maxc?(maxc-minc)/maxc:0,dist=Math.hypot(r-bg[0],g-bg[1],b-bg[2])/441.7,visible=a>.08;
+        color[i]=dist>t&&visible?1:0;metal[i]=(darkChrome?((lum-rowBg[(i/w)|0]>chromeWeak)&&(sat<.42||lum>.82)):((sat<.80&&lum>.02)||lum>.88))&&visible?1:0;redLike[i]=sat>.65&&r>1.2*g&&r>.95*b?1:0;const on=mode==='dark'?lum<t:mode==='light'?lum>1-t:false;simple[i]=(inverted?!on:on)&&visible?1:0;
       }
       const ratio=cleanupRatio();let m,symmetry=0;
       if(mode==='auto'&&!inverted){
-        const colorClean=majority(color,w,h,1),sym=symmetricMask(colorClean,w,h);symmetry=sym.ratio;
-        let metalSeed=removeNoise(majority(metal,w,h,1),w,h,ratio,telemetry);const seamLeft=(w-1)>>1,seamRight=w>>1;let seamEvidence=0;for(let y=0;y<h;y++)seamEvidence+=metalSeed[y*w+seamLeft]+metalSeed[y*w+seamRight];
-        const grown=diskMorph(metalSeed,w,h,Math.max(1,Math.round(w/450)),true),conservative=mirrorIntersection(grown,w,h),protectedHoles=protectedPairedHoles(conservative,redLike,w,h),detail=removeNoise(mirrorUnion(grown,w,h),w,h,ratio,telemetry);
-        if(symmetry>=.62){
+        const colorClean=majority(color,w,h,1);let metalSeed=removeNoise(majority(metal,w,h,1),w,h,ratio,telemetry),axis2=maskAxis2(darkChrome?metalSeed:colorClean,w,h),sym=symmetricMask(colorClean,w,h,axis2);symmetry=sym.ratio;
+        const seamLeft=Math.floor(axis2/2),seamRight=Math.ceil(axis2/2);let seamEvidence=0;for(let y=0;y<h;y++)seamEvidence+=metalSeed[y*w+seamLeft]+metalSeed[y*w+seamRight];
+        const grown=diskMorph(metalSeed,w,h,Math.max(1,Math.round(w/450)),true),conservative=mirrorIntersection(grown,w,h,axis2),detail=removeNoise(mirrorUnion(grown,w,h,axis2),w,h,ratio,telemetry);
+        if(symmetry>=.62||darkChrome){
           const symClean=removeNoise(sym.mask,w,h,ratio,telemetry),near=morph(detail,w,h,Math.max(8,Math.round(w*.018)),true),union=new Uint8Array(w*h);
           for(let i=0;i<union.length;i++)union[i]=detail[i]||(symClean[i]&&near[i])?1:0;
-          m=union;const closeRadius=Math.max(1,Math.round(w/300));m=diskMorph(diskMorph(m,w,h,closeRadius,true),w,h,closeRadius,false);m=removeNoise(m,w,h,ratio,telemetry);m=fillUnprotectedHoles(m,protectedHoles,w,h);m=fillTinyHoles(m,w,h,10);
+          m=union;const closeRadius=Math.max(1,Math.round(w/300));m=diskMorph(diskMorph(m,w,h,closeRadius,true),w,h,closeRadius,false);m=removeNoise(m,w,h,ratio,telemetry);const protectedHoles=protectedPairedHoles(conservative,redLike,w,h,axis2);
+          if(darkChrome){const blackHoles=protectedBlackHoles(m,luminance,rowBg,w,h,Math.max(.018,chromeWeak*.55));for(let i=0;i<protectedHoles.length;i++)if(blackHoles[i])protectedHoles[i]=1}
+          m=fillUnprotectedHoles(m,protectedHoles,w,h);m=fillTinyHoles(m,w,h,10);
           if(!seamEvidence){const pad=Math.max(1,Math.round(w/700));for(let y=0;y<h;y++)for(let x=Math.max(0,seamLeft-pad);x<=Math.min(w-1,seamRight+pad);x++)m[y*w+x]=0}
           m=removeNoise(m,w,h,ratio,telemetry);
           const passes=Math.max(1,Math.round(+ui.smooth.value/3)),fgField=gaussianField(m,w,h,passes),holeField=gaussianField(protectedHoles,w,h,passes);let field=new Float32Array(m.length);const finalMask=new Uint8Array(m.length);
