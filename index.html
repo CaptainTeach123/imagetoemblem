@@ -362,12 +362,6 @@
       const a=[...points,points[0]],out=[a[0]];rdp(a,0,a.length-1,out);out.push(a[a.length-1]);out.pop();return out;
     }
     function smoothRing(points,passes=1){const step=(a,f)=>a.map((p,i)=>{const before=a[(i+a.length-1)%a.length],after=a[(i+1)%a.length];return[p[0]+f*((before[0]+after[0])/2-p[0]),p[1]+f*((before[1]+after[1])/2-p[1])]});let a=points;for(let n=0;n<passes;n++){a=step(a,.43);a=step(a,-.44)}return a}
-    function smoothBoundaryVertices(wallSegments,passes){
-      const vertices=new Map(),adj=new Map();
-      for(const seg of wallSegments){vertices.set(seg.a.key,seg.a);vertices.set(seg.b.key,seg.b);if(!adj.has(seg.a.key))adj.set(seg.a.key,[]);if(!adj.has(seg.b.key))adj.set(seg.b.key,[]);adj.get(seg.a.key).push(seg.b.key);adj.get(seg.b.key).push(seg.a.key)}
-      const step=lambda=>{const moved=new Map();for(const [key,v] of vertices){const near=[...new Set(adj.get(key)||[])];if(near.length!==2)continue;const a=vertices.get(near[0]),b=vertices.get(near[1]),ax=a.x-v.x,ay=a.y-v.y,bx=b.x-v.x,by=b.y-v.y,al=Math.hypot(ax,ay),bl=Math.hypot(bx,by);if(al<1e-6||bl<1e-6)continue;const dot=Math.max(-1,Math.min(1,(ax*bx+ay*by)/(al*bl))),turn=Math.PI-Math.acos(dot),keep=1-smooth01(.45,1.20,turn),mx=(a.x+b.x)*.5,my=(a.y+b.y)*.5;moved.set(key,[v.x+(mx-v.x)*lambda*keep,v.y+(my-v.y)*lambda*keep])}for(const [key,p] of moved){const v=vertices.get(key);v.x=p[0];v.y=p[1]}};
-      for(let pass=0;pass<passes;pass++){step(.34);step(-.35)}
-    }
     function extrudedGeometryFromMask(mask){
       const modelW=+ui.width.value,totalDepth=+ui.depth.value,style=ui.edgeStyle.value,bevel=style==='flat'?0:style==='soft'?Math.min(+ui.bevel.value*.55,totalDepth*.32):Math.min(+ui.bevel.value,totalDepth*.46),bevelDepth=style==='flat'?0:style==='soft'?Math.min(totalDepth*.22,bevel*.75):Math.max(0,totalDepth/2-Math.min(.01,totalDepth*.02)),coreDepth=Math.max(.02,totalDepth-2*bevelDepth),spanW=mask.maxX-mask.minX+1,cell=modelW/spanW,centerX=(mask.minX+mask.maxX+1)/2,centerY=(mask.minY+mask.maxY+1)/2,result=makeContours().size([mask.w,mask.h]).smooth(true).thresholds([.5])(mask.field)[0],polygons=result?.coordinates||[],shapes=[];
       const convert=ring=>{let points=ring;if(points.length>1&&points[0][0]===points.at(-1)[0]&&points[0][1]===points.at(-1)[1])points=points.slice(0,-1);points=smoothRing(points,1);points=simplifyRing(points,.015);return points.map(([x,y])=>new THREE.Vector2((x-centerX)*cell,(centerY-y)*cell))};
@@ -381,19 +375,19 @@
       const quality=Math.min(mask.w,+ui.resolution.value),g=resample(mask,quality);if(g.maxX<0)return null;
       const dist2=distanceInside(g.binary,g.w,g.h),modelW=+ui.width.value,totalDepth=+ui.depth.value,spanW=g.maxX-g.minX+1,spanH=g.maxY-g.minY+1,cell=modelW/spanW,centerX=(g.minX+g.maxX)/2,centerY=(g.minY+g.maxY)/2,half=totalDepth/2;
       const style=ui.edgeStyle.value,requestedEdge=style==='flat'?0:style==='soft'?Math.min(+ui.bevel.value*.55,half*.8):Math.min(+ui.bevel.value,Math.max(.2,modelW*.025)),edgeWidth=mask.darkChrome&&style!=='flat'?Math.max(requestedEdge,Math.min(1.35,modelW*.014)):requestedEdge;
-      const bevelRise=style==='flat'?0:style==='soft'?Math.min(totalDepth*.16,edgeWidth*.45):Math.min(totalDepth*.24,edgeWidth*.72),edgeTop=half-bevelRise,reliefDepth=g.relief?Math.min(.62,totalDepth*.22)*(+ui.relief.value/100):0;
+      const minimumCore=style==='flat'?half:Math.min(half,Math.max(.04,totalDepth*.02)),bevelRise=style==='flat'?0:Math.min(half-minimumCore,edgeWidth*(style==='soft'?.8:1.8)),coreHalf=half-bevelRise,reliefDepth=g.relief?Math.min(.62,totalDepth*.22)*(+ui.relief.value/100):0;
       const positions=[],indices=[],pairs=new Map(),crossings=new Map(),boundary=new Map(),samples=[];
       const base=id=>({key:'g'+id,id,x:id%g.w,y:(id/g.w)|0,value:g.field[id],boundary:Math.abs(g.field[id]-.5)<1e-7});
       function cross(a,b){const lo=Math.min(a.id,b.id),hi=Math.max(a.id,b.id),key='e'+lo+'_'+hi;if(crossings.has(key))return crossings.get(key);const t=(.5-a.value)/(b.value-a.value),v={key,id:-1,x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,value:.5,boundary:true};crossings.set(key,v);return v}
       function clip(poly){const out=[];for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length],insideA=a.value>=.5,insideB=b.value>=.5;if(insideA&&insideB)out.push(b);else if(insideA&&!insideB)out.push(cross(a,b));else if(!insideA&&insideB){out.push(cross(a,b));out.push(b)}}return out.filter((v,i,a)=>!i||v.key!==a[i-1].key)}
-      function referenceProfile(s){const a=.72;if(s<=a)return s;const u=(s-a)/(1-a),u2=u*u,u3=u2*u,u4=u3*u,u5=u4*u;return a+(1-a)*(u+4*u3-7*u4+3*u5)}
+      function referenceProfile(s){return Math.sqrt(Math.max(0,2*s-s*s))}
       function pair(v){if(pairs.has(v.key))return pairs.get(v.key);const x=(v.x-centerX)*cell,y=(centerY-v.y)*cell,top=positions.length/3;positions.push(x,y,0);const bottom=positions.length/3;positions.push(x,y,0);const p={top,bottom,v};pairs.set(v.key,p);samples.push(p);return p}
       function area(poly){let a=0;for(let i=0;i<poly.length;i++){const p=poly[i],q=poly[(i+1)%poly.length];a+=(p.x-centerX)*(centerY-q.y)-(q.x-centerX)*(centerY-p.y)}return a/2}
       function addFace(a,b,c){const ax=positions[b*3]-positions[a*3],ay=positions[b*3+1]-positions[a*3+1],az=positions[b*3+2]-positions[a*3+2],bx=positions[c*3]-positions[a*3],by=positions[c*3+1]-positions[a*3+1],bz=positions[c*3+2]-positions[a*3+2],cx=ay*bz-az*by,cy=az*bx-ax*bz,cz=ax*by-ay*bx;if(cx*cx+cy*cy+cz*cz>1e-18)indices.push(a,b,c)}
       function addPolygon(poly){if(poly.length<3)return;if(area(poly)<0)poly.reverse();const ps=poly.map(pair);for(let i=1;i<ps.length-1;i++){addFace(ps[0].top,ps[i].top,ps[i+1].top);addFace(ps[0].bottom,ps[i+1].bottom,ps[i].bottom)}for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];if(!a.boundary||!b.boundary||a.key===b.key||Math.hypot(a.x-b.x,a.y-b.y)<1e-8)continue;const key=a.key<b.key?a.key+'|'+b.key:b.key+'|'+a.key;if(boundary.has(key))boundary.get(key).count++;else boundary.set(key,{a,b,count:1})}}
       const x0=Math.max(0,g.minX-2),x1=Math.min(g.w-2,g.maxX+1),y0=Math.max(0,g.minY-2),y1=Math.min(g.h-2,g.maxY+1);
-      for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const a=base(y*g.w+x),b=base(y*g.w+x+1),c=base((y+1)*g.w+x+1),d=base((y+1)*g.w+x);addPolygon(clip([a,b,c]));addPolygon(clip([a,c,d]))}
-      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundaryVertices(wallSegments,mask.darkChrome?5:3);for(const p of samples)if(p.v.boundary){positions[p.top*3]=(p.v.x-centerX)*cell;positions[p.top*3+1]=(centerY-p.v.y)*cell;positions[p.bottom*3]=positions[p.top*3];positions[p.bottom*3+1]=positions[p.top*3+1]}
+      for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const a=base(y*g.w+x),b=base(y*g.w+x+1),c=base((y+1)*g.w+x+1),d=base((y+1)*g.w+x);if((x+y)&1){addPolygon(clip([a,b,d]));addPolygon(clip([b,c,d]))}else{addPolygon(clip([a,b,c]));addPolygon(clip([a,c,d]))}}
+      const wallSegments=[...boundary.values()].filter(s=>s.count===1);
       const segments=[],buckets=new Map(),bevelPixels=edgeWidth>0?edgeWidth/cell:0,bucketSize=Math.max(4,Math.ceil(bevelPixels+2));
       for(const edge of wallSegments){const a=[edge.a.x,edge.a.y],b=[edge.b.x,edge.b.y];if(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8)continue;const index=segments.length;segments.push([a,b]);const bx0=Math.floor(Math.min(a[0],b[0])/bucketSize),bx1=Math.floor(Math.max(a[0],b[0])/bucketSize),by0=Math.floor(Math.min(a[1],b[1])/bucketSize),by1=Math.floor(Math.max(a[1],b[1])/bucketSize);for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){const key=bx+'|'+by;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(index)}}
       const distanceCache=new Float32Array(g.w*g.h),widthCache=new Float32Array(g.w*g.h),seen=new Int32Array(segments.length);distanceCache.fill(-1);widthCache.fill(edgeWidth);let stamp=0;
@@ -410,9 +404,9 @@
         return distanceCache[v.id]=Math.min(edgeWidth,Math.max(0,d1*cell));
       }
       for(const p of samples){
-        const d=continuousDistance(p.v),w=p.v.id>=0?widthCache[p.v.id]:edgeWidth,s=w>0?Math.max(0,Math.min(1,d/w)):1,profile=style==='reference'?referenceProfile(s):style==='soft'?Math.sqrt(Math.max(0,2*s-s*s)):1,baseZ=edgeWidth>0?edgeTop+bevelRise*profile:half;
+        const d=continuousDistance(p.v),w=p.v.id>=0?widthCache[p.v.id]:edgeWidth,s=w>0?Math.max(0,Math.min(1,d/w)):1,profile=style==='reference'?referenceProfile(s):style==='soft'?s*s*(3-2*s):1,baseZ=edgeWidth>0?coreHalf+bevelRise*profile:half;
         const inside=p.v.id>=0?Math.max(0,(Math.sqrt(dist2[p.v.id])-.5)*cell):0,guard=w+Math.max(.18,cell*2.5),fade=Math.max(.38,cell*4),gate=reliefDepth?smooth01(guard,guard+fade,inside):0,rv=g.relief?bilinear(g.relief,g.w,g.h,p.v.x,p.v.y):1;
-        positions[p.top*3+2]=baseZ-reliefDepth*gate*(1-rv);positions[p.bottom*3+2]=-half;
+        positions[p.top*3+2]=baseZ-reliefDepth*gate*(1-rv);positions[p.bottom*3+2]=-baseZ;
       }
       for(const seg of wallSegments){const a=pair(seg.a),b=pair(seg.b);addFace(a.top,a.bottom,b.bottom);addFace(a.top,b.bottom,b.top)}
       if(!indices.length)return null;const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setIndex(indices);geo.computeBoundingBox();const actualW=geo.boundingBox.max.x-geo.boundingBox.min.x,scale=modelW/Math.max(.001,actualW);geo.scale(scale,scale,1);geo.computeVertexNormals();geo.computeBoundingBox();geo.computeBoundingSphere();
