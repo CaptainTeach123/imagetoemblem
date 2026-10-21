@@ -77,7 +77,7 @@
             <div class="control"><label for="mode">Detection method</label><output></output><select id="mode"><option value="auto">Automatic emblem isolation</option><option value="color">Remove sampled background</option><option value="metal">Metal / low-saturation artwork</option><option value="dark">Keep darker areas</option><option value="light">Keep lighter areas</option></select></div>
             <div class="control"><label for="resolution">Trace quality</label><output id="resolutionOut">1200 px</output><input id="resolution" type="range" min="400" max="1200" value="1200" step="100"></div>
             <div class="control"><label for="smooth">Curve cleanup</label><output id="smoothOut">3</output><input id="smooth" type="range" min="0" max="10" value="3"></div>
-            <div class="control"><label for="bevel">Bevel width</label><output id="bevelOut">0.7 mm</output><input id="bevel" type="range" min="0.2" max="1.2" value="0.7" step="0.1"></div>
+            <div class="control"><label for="bevel">Bevel width</label><output id="bevelOut">1.1 mm</output><input id="bevel" type="range" min="0.2" max="2.0" value="1.1" step="0.1"></div>
             <div class="control"><label for="relief">Surface detail</label><output id="reliefOut">85%</output><input id="relief" type="range" min="0" max="100" value="85" step="5"><small>Keeps coherent ridges and facets from reflective artwork without embossing background noise.</small></div>
             <button class="secondary" id="invert">Swap kept and removed areas</button>
           </div>
@@ -160,13 +160,13 @@
     Object.values(ui).forEach(el=>el.addEventListener(el.matches('input[type=range]')?'change':'input',()=>{labels();schedule(false)}));
 
     const presets={
-      ornamental:{mode:'auto',threshold:22,cleanup:'medium',resolution:1200,smooth:3,relief:85},
-      silhouette:{mode:'color',threshold:28,cleanup:'low',resolution:800,smooth:3,relief:0},
-      line:{mode:'dark',threshold:22,cleanup:'low',resolution:1200,smooth:2,relief:0}
+      ornamental:{mode:'auto',threshold:22,cleanup:'medium',resolution:1200,smooth:3,bevel:1.1,relief:85},
+      silhouette:{mode:'color',threshold:28,cleanup:'low',resolution:800,smooth:3,bevel:.4,relief:0},
+      line:{mode:'dark',threshold:22,cleanup:'low',resolution:1200,smooth:2,bevel:.4,relief:0}
     };
     document.querySelectorAll('.preset').forEach(button=>button.onclick=()=>{
       activePreset=button.dataset.preset;document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b===button));
-      Object.assign(ui.mode,{value:presets[activePreset].mode});ui.threshold.value=presets[activePreset].threshold;ui.cleanup.value=presets[activePreset].cleanup;ui.resolution.value=presets[activePreset].resolution;ui.smooth.value=presets[activePreset].smooth;ui.relief.value=presets[activePreset].relief;labels();schedule(true);
+      Object.assign(ui.mode,{value:presets[activePreset].mode});ui.threshold.value=presets[activePreset].threshold;ui.cleanup.value=presets[activePreset].cleanup;ui.resolution.value=presets[activePreset].resolution;ui.smooth.value=presets[activePreset].smooth;ui.bevel.value=presets[activePreset].bevel;ui.relief.value=presets[activePreset].relief;labels();schedule(true);
     });
 
     function load(file){
@@ -285,7 +285,7 @@
     function regularizeMask(m,w,h,passes){
       if(passes<=0)return null;const wantedBodies=components(m,w,h).filter(g=>g.length>=8).length,wantedHoles=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length,sourceField=Float32Array.from(m),contour=makeContours().size([w,h]).smooth(true).thresholds([.5])(sourceField)[0];if(!contour)return null;
       for(let amount=passes;amount>0;amount--){const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d');ctx.clearRect(0,0,w,h);ctx.fillStyle='#fff';
-        for(const polygon of contour.coordinates||[]){const path=new Path2D();for(const ring of polygon){let points=ring;if(points.length>1&&points[0][0]===points.at(-1)[0]&&points[0][1]===points.at(-1)[1])points=points.slice(0,-1);points=simplifyRing(points,.6+amount*.65);points=smoothRing(points,Math.min(2,amount));if(points.length<3)continue;path.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)path.lineTo(points[i][0],points[i][1]);path.closePath()}ctx.fill(path,'evenodd')}
+        for(const polygon of contour.coordinates||[]){const path=new Path2D();for(const ring of polygon){let points=ring;if(points.length>1&&points[0][0]===points.at(-1)[0]&&points[0][1]===points.at(-1)[1])points=points.slice(0,-1);points=simplifyRing(points,.22+amount*.14);points=smoothRing(points,1);if(points.length<3)continue;path.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)path.lineTo(points[i][0],points[i][1]);path.closePath()}ctx.fill(path,'evenodd')}
         const pixels=ctx.getImageData(0,0,w,h).data,field=new Float32Array(m.length),binary=new Uint8Array(m.length);for(let i=0;i<binary.length;i++){field[i]=pixels[i*4+3]/255;binary[i]=field[i]>=.5?1:0}const bodies=components(binary,w,h).filter(g=>g.length>=8).length,holes=components(binary,w,h,0).filter(g=>!g.border&&g.length>=8).length;if(bodies===wantedBodies&&holes===wantedHoles)return{m:binary,field}
       }
       return null;
@@ -320,7 +320,7 @@
           const passes=Math.max(1,Math.round(+ui.smooth.value/3)),fgField=gaussianField(m,w,h,passes),holeField=gaussianField(protectedHoles,w,h,passes);let field=new Float32Array(m.length);const finalMask=new Uint8Array(m.length);
           for(let i=0;i<field.length;i++){field[i]=Math.min(fgField[i],1-holeField[i]);finalMask[i]=field[i]>=.5?1:0}m=removeNoise(finalMask,w,h,ratio,telemetry);for(let i=0;i<field.length;i++)if(!m[i]&&field[i]>=.5)field[i]=0;
           const regular=regularizeMask(m,w,h,Math.max(0,Math.round(+ui.smooth.value/2)));if(regular){m=regular.m;field=regular.field}sealTinyHoles(m,field,w,h,Math.max(12,Math.round(w*h*.00002)));
-          const bounds=maskBounds(m,w,h);if(bounds.maxX<0)return null;const bodies=components(m,w,h).filter(g=>g.length>=8).length,holes=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length,relief=darkChrome?chromeRelief(luminance,rowBg,m,w,h,axis2,symmetry):null;
+          const bounds=maskBounds(m,w,h);if(bounds.maxX<0)return null;const bodies=components(m,w,h).filter(g=>g.length>=8).length,holes=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length,relief=darkChrome&&+ui.relief.value>0?chromeRelief(luminance,rowBg,m,w,h,axis2,symmetry):null;
           return {m,field,relief,w,h,symmetry,bodies,holes,removed:telemetry.removed,darkChrome,...bounds};
         }else m=bgSat>.55?detail:removeNoise(colorClean,w,h,ratio,telemetry);
       }else if(mode==='color'||(mode==='auto'&&inverted)){
@@ -328,7 +328,7 @@
       }else if(mode==='metal'){
         m=removeNoise(majority(metal,w,h,1),w,h,ratio,telemetry);m=morph(m,w,h,Math.max(2,Math.round(w/180)),true);
       }else m=removeNoise(majority(simple,w,h,1),w,h,ratio,telemetry);
-      const bounds=maskBounds(m,w,h);if(bounds.maxX<0)return null;const field=gaussianField(m,w,h,Math.max(1,Math.round(+ui.smooth.value/3)));sealTinyHoles(m,field,w,h,Math.max(12,Math.round(w*h*.00002)));const bodies=components(m,w,h).filter(g=>g.length>=8).length,holes=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length,relief=darkChrome?chromeRelief(luminance,rowBg,m,w,h,maskAxis2(m,w,h),symmetry):null;
+      const bounds=maskBounds(m,w,h);if(bounds.maxX<0)return null;const field=gaussianField(m,w,h,Math.max(1,Math.round(+ui.smooth.value/3)));sealTinyHoles(m,field,w,h,Math.max(12,Math.round(w*h*.00002)));const bodies=components(m,w,h).filter(g=>g.length>=8).length,holes=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length,relief=darkChrome&&+ui.relief.value>0?chromeRelief(luminance,rowBg,m,w,h,maskAxis2(m,w,h),symmetry):null;
       return {m,field,relief,w,h,symmetry,bodies,holes,removed:telemetry.removed,darkChrome,...bounds};
     }
 
@@ -374,7 +374,7 @@
       if(new URLSearchParams(location.search).has('extrude'))return extrudedGeometryFromMask(mask);
       const quality=Math.min(mask.w,+ui.resolution.value),g=resample(mask,quality);if(g.maxX<0)return null;
       const dist2=distanceInside(g.binary,g.w,g.h),modelW=+ui.width.value,totalDepth=+ui.depth.value,spanW=g.maxX-g.minX+1,spanH=g.maxY-g.minY+1,cell=modelW/spanW,centerX=(g.minX+g.maxX)/2,centerY=(g.minY+g.maxY)/2,half=totalDepth/2;
-      const style=ui.edgeStyle.value,requestedEdge=style==='flat'?0:style==='soft'?Math.min(+ui.bevel.value*.55,half*.8):Math.min(+ui.bevel.value,Math.max(.2,modelW*.025)),edgeWidth=mask.darkChrome&&style!=='flat'?Math.max(requestedEdge,Math.min(1.35,modelW*.014)):requestedEdge;
+      const style=ui.edgeStyle.value,requestedEdge=style==='flat'?0:style==='soft'?Math.min(+ui.bevel.value*.55,half*.8):Math.min(+ui.bevel.value,Math.max(.2,modelW*.025)),edgeWidth=requestedEdge;
       const minimumCore=style==='flat'?half:Math.min(half,Math.max(.04,totalDepth*.02)),bevelRise=style==='flat'?0:Math.min(half-minimumCore,edgeWidth*(style==='soft'?.8:1.8)),coreHalf=half-bevelRise,reliefDepth=g.relief?Math.min(.62,totalDepth*.22)*(+ui.relief.value/100):0;
       const positions=[],indices=[],pairs=new Map(),crossings=new Map(),boundary=new Map(),samples=[];
       const base=id=>({key:'g'+id,id,x:id%g.w,y:(id/g.w)|0,value:g.field[id],boundary:Math.abs(g.field[id]-.5)<1e-7});
@@ -385,9 +385,16 @@
       function area(poly){let a=0;for(let i=0;i<poly.length;i++){const p=poly[i],q=poly[(i+1)%poly.length];a+=(p.x-centerX)*(centerY-q.y)-(q.x-centerX)*(centerY-p.y)}return a/2}
       function addFace(a,b,c){const ax=positions[b*3]-positions[a*3],ay=positions[b*3+1]-positions[a*3+1],az=positions[b*3+2]-positions[a*3+2],bx=positions[c*3]-positions[a*3],by=positions[c*3+1]-positions[a*3+1],bz=positions[c*3+2]-positions[a*3+2],cx=ay*bz-az*by,cy=az*bx-ax*bz,cz=ax*by-ay*bx;if(cx*cx+cy*cy+cz*cz>1e-18)indices.push(a,b,c)}
       function addPolygon(poly){if(poly.length<3)return;if(area(poly)<0)poly.reverse();const ps=poly.map(pair);for(let i=1;i<ps.length-1;i++){addFace(ps[0].top,ps[i].top,ps[i+1].top);addFace(ps[0].bottom,ps[i+1].bottom,ps[i].bottom)}for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];if(!a.boundary||!b.boundary||a.key===b.key||Math.hypot(a.x-b.x,a.y-b.y)<1e-8)continue;const key=a.key<b.key?a.key+'|'+b.key:b.key+'|'+a.key;if(boundary.has(key))boundary.get(key).count++;else boundary.set(key,{a,b,count:1})}}
+      function smoothBoundarySafely(walls,passes){
+        const byTop=new Map(samples.map(p=>[p.top,p])),near=new Map(),incident=new Map();
+        for(const edge of walls){const pa=pairs.get(edge.a.key),pb=pairs.get(edge.b.key);if(!pa||!pb)continue;edge.a=pa.v;edge.b=pb.v;if(!near.has(pa.top))near.set(pa.top,new Set());if(!near.has(pb.top))near.set(pb.top,new Set());near.get(pa.top).add(pb.top);near.get(pb.top).add(pa.top)}
+        for(let o=0;o<indices.length;o+=3){const tri=[indices[o],indices[o+1],indices[o+2]];if(!tri.every(i=>byTop.has(i)))continue;for(const i of tri){if(!incident.has(i))incident.set(i,[]);incident.get(i).push(o)}}
+        const signed=o=>{const a=indices[o],b=indices[o+1],c=indices[o+2],ax=positions[a*3],ay=positions[a*3+1],bx=positions[b*3],by=positions[b*3+1],cx=positions[c*3],cy=positions[c*3+1];return(bx-ax)*(cy-ay)-(by-ay)*(cx-ax)},minimum=cell*cell*2e-5,order=[...near.keys()];
+        for(let pass=0;pass<passes;pass++){const sweep=pass&1?[...order].reverse():order;for(const top of sweep){const links=[...(near.get(top)||[])];if(links.length!==2)continue;const p=byTop.get(top),a=byTop.get(links[0]),b=byTop.get(links[1]);if(!p||!a||!b)continue;const ax=a.v.x-p.v.x,ay=a.v.y-p.v.y,bx=b.v.x-p.v.x,by=b.v.y-p.v.y,al=Math.hypot(ax,ay),bl=Math.hypot(bx,by);if(al<1e-6||bl<1e-6)continue;const dot=Math.max(-1,Math.min(1,(ax*bx+ay*by)/(al*bl))),turn=Math.PI-Math.acos(dot),weight=1-smooth01(.50,1.30,turn);if(weight<=0)continue;let dx=((a.v.x+b.v.x)*.5-p.v.x)*.22*weight,dy=((a.v.y+b.v.y)*.5-p.v.y)*.22*weight;const length=Math.hypot(dx,dy),limit=.14;if(length>limit){dx*=limit/length;dy*=limit/length}const oldX=p.v.x,oldY=p.v.y,oldPX=positions[p.top*3],oldPY=positions[p.top*3+1],newX=oldX+dx,newY=oldY+dy,newPX=(newX-centerX)*cell,newPY=(centerY-newY)*cell;p.v.x=newX;p.v.y=newY;positions[p.top*3]=positions[p.bottom*3]=newPX;positions[p.top*3+1]=positions[p.bottom*3+1]=newPY;let valid=true;for(const o of incident.get(top)||[])if(signed(o)<=minimum){valid=false;break}if(!valid){p.v.x=oldX;p.v.y=oldY;positions[p.top*3]=positions[p.bottom*3]=oldPX;positions[p.top*3+1]=positions[p.bottom*3+1]=oldPY}}}
+      }
       const x0=Math.max(0,g.minX-2),x1=Math.min(g.w-2,g.maxX+1),y0=Math.max(0,g.minY-2),y1=Math.min(g.h-2,g.maxY+1);
       for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const a=base(y*g.w+x),b=base(y*g.w+x+1),c=base((y+1)*g.w+x+1),d=base((y+1)*g.w+x);if((x+y)&1){addPolygon(clip([a,b,d]));addPolygon(clip([b,c,d]))}else{addPolygon(clip([a,b,c]));addPolygon(clip([a,c,d]))}}
-      const wallSegments=[...boundary.values()].filter(s=>s.count===1);
+      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,mask.darkChrome?4:2);
       const segments=[],buckets=new Map(),bevelPixels=edgeWidth>0?edgeWidth/cell:0,bucketSize=Math.max(4,Math.ceil(bevelPixels+2));
       for(const edge of wallSegments){const a=[edge.a.x,edge.a.y],b=[edge.b.x,edge.b.y];if(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8)continue;const index=segments.length;segments.push([a,b]);const bx0=Math.floor(Math.min(a[0],b[0])/bucketSize),bx1=Math.floor(Math.max(a[0],b[0])/bucketSize),by0=Math.floor(Math.min(a[1],b[1])/bucketSize),by1=Math.floor(Math.max(a[1],b[1])/bucketSize);for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){const key=bx+'|'+by;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(index)}}
       const distanceCache=new Float32Array(g.w*g.h),widthCache=new Float32Array(g.w*g.h),seen=new Int32Array(segments.length);distanceCache.fill(-1);widthCache.fill(edgeWidth);let stamp=0;
@@ -416,6 +423,7 @@
     function updateMaskMessage(mask){
       const pieces=mask.bodies===1?'1 piece':`${mask.bodies} pieces`,holes=mask.holes===1?'1 hole':`${mask.holes} holes`;let text=`<b>${pieces} kept • ${holes}</b>`;let cls='maskNote good';
       if(mask.bodies>8){text='<b>Small background fragments remain.</b> Increase Speck cleanup or pick the background again.';cls='maskNote warn'}else{if(mask.removed)text+=` • ${mask.removed} specks removed`;if(mask.darkChrome)text+=' • reflective metal matched';if(mask.relief)text+=' • surface detail kept'}
+      ui.relief.disabled=!mask.darkChrome;$('reliefOut').textContent=mask.darkChrome?ui.relief.value+'%':'Not detected';
       $('maskNote').className=cls;$('maskNote').innerHTML=text;$('stageMessage').innerHTML=mask.relief?`<b>Depth preview ready</b> — ${pieces}, ${holes}. Lighter ridges print higher.`:`<b>Cutout ready</b> — ${pieces}, ${holes}.`;$('stageHelp').textContent=mask.relief?'Depth preview — lighter areas print higher.':'White becomes the model. Transparent areas are removed.';
     }
     function rebuild(fit=false){
