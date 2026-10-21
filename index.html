@@ -245,6 +245,7 @@
       return protectedMask;
     }
     function fillTinyHoles(m,w,h,maxArea){const out=m.slice();for(const g of components(m,w,h,0))if(!g.border&&g.length<=maxArea)for(const i of g)out[i]=1;return out}
+    function sealTinyHoles(m,field,w,h,maxArea){let sealed=0;for(const g of components(m,w,h,0))if(!g.border&&g.length<=maxArea){sealed++;for(const i of g){m[i]=1;field[i]=1}}return sealed}
     function fillUnprotectedHoles(m,protectedMask,w,h){
       const out=m.slice();for(const group of components(m,w,h,0)){if(group.border)continue;let keep=false;for(const i of group)if(protectedMask[i]){keep=true;break}if(!keep)for(const i of group)out[i]=1}return out;
     }
@@ -287,23 +288,23 @@
           const symClean=removeNoise(sym.mask,w,h,ratio,telemetry),near=morph(detail,w,h,Math.max(8,Math.round(w*.018)),true),union=new Uint8Array(w*h);
           for(let i=0;i<union.length;i++)union[i]=detail[i]||(symClean[i]&&near[i])?1:0;
           m=union;const closeRadius=Math.max(1,Math.round(w/300));m=diskMorph(diskMorph(m,w,h,closeRadius,true),w,h,closeRadius,false);m=removeNoise(m,w,h,ratio,telemetry);const protectedHoles=protectedPairedHoles(conservative,redLike,w,h,axis2);
-          if(darkChrome){const blackHoles=protectedBlackHoles(m,luminance,rowBg,w,h,Math.max(.018,chromeWeak*.55));for(let i=0;i<protectedHoles.length;i++)if(blackHoles[i])protectedHoles[i]=1}
+          if(darkChrome){const blackHoles=mirrorUnion(protectedBlackHoles(m,luminance,rowBg,w,h,Math.max(.018,chromeWeak*.55)),w,h,axis2);for(let i=0;i<protectedHoles.length;i++)if(blackHoles[i])protectedHoles[i]=1}
           m=fillUnprotectedHoles(m,protectedHoles,w,h);m=fillTinyHoles(m,w,h,10);
           if(!seamEvidence){const pad=Math.max(1,Math.round(w/700));for(let y=0;y<h;y++)for(let x=Math.max(0,seamLeft-pad);x<=Math.min(w-1,seamRight+pad);x++)m[y*w+x]=0}
           m=removeNoise(m,w,h,ratio,telemetry);
           const passes=Math.max(1,Math.round(+ui.smooth.value/3)),fgField=gaussianField(m,w,h,passes),holeField=gaussianField(protectedHoles,w,h,passes);let field=new Float32Array(m.length);const finalMask=new Uint8Array(m.length);
           for(let i=0;i<field.length;i++){field[i]=Math.min(fgField[i],1-holeField[i]);finalMask[i]=field[i]>=.5?1:0}m=removeNoise(finalMask,w,h,ratio,telemetry);for(let i=0;i<field.length;i++)if(!m[i]&&field[i]>=.5)field[i]=0;
-          const regular=regularizeMask(m,w,h,Math.max(0,Math.round(+ui.smooth.value/2)));if(regular){m=regular.m;field=regular.field}
+          const regular=regularizeMask(m,w,h,Math.max(0,Math.round(+ui.smooth.value/2)));if(regular){m=regular.m;field=regular.field}sealTinyHoles(m,field,w,h,Math.max(12,Math.round(w*h*.00002)));
           const bounds=maskBounds(m,w,h);if(bounds.maxX<0)return null;const bodies=components(m,w,h).filter(g=>g.length>=8).length,holes=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length;
-          return {m,field,w,h,symmetry,bodies,holes,removed:telemetry.removed,...bounds};
+          return {m,field,w,h,symmetry,bodies,holes,removed:telemetry.removed,darkChrome,...bounds};
         }else m=bgSat>.55?detail:removeNoise(colorClean,w,h,ratio,telemetry);
       }else if(mode==='color'||(mode==='auto'&&inverted)){
         m=color;if(inverted)for(let i=0;i<m.length;i++)m[i]=data[i*4+3]>20?(m[i]?0:1):0;m=removeNoise(majority(m,w,h,1),w,h,ratio,telemetry);
       }else if(mode==='metal'){
         m=removeNoise(majority(metal,w,h,1),w,h,ratio,telemetry);m=morph(m,w,h,Math.max(2,Math.round(w/180)),true);
       }else m=removeNoise(majority(simple,w,h,1),w,h,ratio,telemetry);
-      const bounds=maskBounds(m,w,h);if(bounds.maxX<0)return null;const field=gaussianField(m,w,h,Math.max(1,Math.round(+ui.smooth.value/3))),bodies=components(m,w,h).filter(g=>g.length>=8).length,holes=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length;
-      return {m,field,w,h,symmetry,bodies,holes,removed:telemetry.removed,...bounds};
+      const bounds=maskBounds(m,w,h);if(bounds.maxX<0)return null;const field=gaussianField(m,w,h,Math.max(1,Math.round(+ui.smooth.value/3)));sealTinyHoles(m,field,w,h,Math.max(12,Math.round(w*h*.00002)));const bodies=components(m,w,h).filter(g=>g.length>=8).length,holes=components(m,w,h,0).filter(g=>!g.border&&g.length>=8).length;
+      return {m,field,w,h,symmetry,bodies,holes,removed:telemetry.removed,darkChrome,...bounds};
     }
 
     function drawCutout(mask){
@@ -384,7 +385,7 @@
 
     function updateMaskMessage(mask){
       const pieces=mask.bodies===1?'1 piece':`${mask.bodies} pieces`,holes=mask.holes===1?'1 hole':`${mask.holes} holes`;let text=`<b>${pieces} kept • ${holes}</b>`;let cls='maskNote good';
-      if(mask.bodies>8){text='<b>Small background fragments remain.</b> Increase Speck cleanup or pick the background again.';cls='maskNote warn'}else if(mask.removed)text+=` • ${mask.removed} specks removed`;
+      if(mask.bodies>8){text='<b>Small background fragments remain.</b> Increase Speck cleanup or pick the background again.';cls='maskNote warn'}else{if(mask.removed)text+=` • ${mask.removed} specks removed`;if(mask.darkChrome)text+=' • reflective metal matched'}
       $('maskNote').className=cls;$('maskNote').innerHTML=text;$('stageMessage').innerHTML=`<b>Cutout ready</b> — ${pieces}, ${holes}.`;
     }
     function rebuild(fit=false){
