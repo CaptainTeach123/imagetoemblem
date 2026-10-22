@@ -391,27 +391,75 @@
       // A manufactured chamfer: a short C2 wall transition, a genuinely planar
       // middle, and a C2 ease into the face.  Keeping most of the band linear
       // avoids the rolled bead/highlight produced by the former all-curved edge.
-      const profileA=.14,profileB=.72,profileM0=3,profileM=(2-profileA*profileM0)/(1+profileB-profileA);
+      const profileA=.14,profileB=.72,profileM0=3,profileM=(2-profileA*profileM0)/(1+profileB-profileA),profileCorner=profileA*(profileM0-profileM)/(2*Math.sqrt(profileA));
       const profileIntegral=t=>{const t2=t*t,t4=t2*t2;return t4*(t2-3*t+2.5)};
       const profileEase=t=>t*t*t*(10+t*(-15+6*t));
       function referenceProfile(s){
         s=Math.max(0,Math.min(1,s));const ha=profileA*(profileM0+profileM)*.5;
-        if(s<=profileA)return profileM0*s+(profileM-profileM0)*profileA*profileIntegral(s/profileA);
+        // A short square-root fillet leaves the wall vertically, then joins the
+        // planar chamfer with the same height and slope as the old profile.
+        // The exported surface is therefore tangent to the wall as sampling is
+        // refined instead of meeting it at a permanent hard angle.
+        if(s<=profileA)return profileM*s+profileCorner*(2*Math.sqrt(s)-s/Math.sqrt(profileA));
         if(s<=profileB)return ha+profileM*(s-profileA);
         const hb=ha+profileM*(profileB-profileA),c=1-profileB,t=(s-profileB)/c;return hb+profileM*((s-profileB)-c*profileIntegral(t));
       }
-      function referenceProfileSlope(s){s=Math.max(0,Math.min(1,s));if(s<=profileA)return profileM0+(profileM-profileM0)*profileEase(s/profileA);if(s<=profileB)return profileM;return profileM*(1-profileEase((s-profileB)/(1-profileB)))}
+      function referenceProfileSlope(s){s=Math.max(0,Math.min(1,s));if(s<=profileA)return profileM+profileCorner*(1/Math.sqrt(Math.max(1e-7,s))-1/Math.sqrt(profileA));if(s<=profileB)return profileM;return profileM*(1-profileEase((s-profileB)/(1-profileB)))}
       function pair(v){if(pairs.has(v.key))return pairs.get(v.key);const x=(v.x-centerX)*cell,y=(centerY-v.y)*cell,top=positions.length/3;positions.push(x,y,0);const bottom=positions.length/3;positions.push(x,y,0);const p={top,bottom,v};pairs.set(v.key,p);samples.push(p);return p}
       function wallPair(v){if(wallPairs.has(v.key))return wallPairs.get(v.key);const source=pair(v),top=positions.length/3;positions.push(positions[source.top*3],positions[source.top*3+1],positions[source.top*3+2]);const bottom=positions.length/3;positions.push(positions[source.bottom*3],positions[source.bottom*3+1],positions[source.bottom*3+2]);const p={top,bottom,v};wallPairs.set(v.key,p);return p}
       function area(poly){let a=0;for(let i=0;i<poly.length;i++){const p=poly[i],q=poly[(i+1)%poly.length];a+=(p.x-centerX)*(centerY-q.y)-(q.x-centerX)*(centerY-p.y)}return a/2}
-      function addFace(a,b,c){const ax=positions[b*3]-positions[a*3],ay=positions[b*3+1]-positions[a*3+1],az=positions[b*3+2]-positions[a*3+2],bx=positions[c*3]-positions[a*3],by=positions[c*3+1]-positions[a*3+1],bz=positions[c*3+2]-positions[a*3+2],cx=ay*bz-az*by,cy=az*bx-ax*bz,cz=ax*by-ay*bx;if(cx*cx+cy*cy+cz*cz>1e-18)indices.push(a,b,c)}
+      // Keep provisionally collinear surface faces until the boundary has been
+      // faired and heights have been assigned.  Some become real triangles
+      // after that move; dropping them early left pinholes at raster crossings.
+      function addFace(a,b,c){if(a!==b&&b!==c&&c!==a)indices.push(a,b,c)}
       function addPolygon(poly){if(poly.length<3)return;if(area(poly)<0)poly.reverse();const ps=poly.map(pair);for(let i=1;i<ps.length-1;i++){addFace(ps[0].top,ps[i].top,ps[i+1].top);addFace(ps[0].bottom,ps[i+1].bottom,ps[i].bottom)}for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];if(!a.boundary||!b.boundary||a.key===b.key||Math.hypot(a.x-b.x,a.y-b.y)<1e-8)continue;const key=a.key<b.key?a.key+'|'+b.key:b.key+'|'+a.key;if(boundary.has(key))boundary.get(key).count++;else boundary.set(key,{a,b,count:1})}}
       function smoothBoundarySafely(walls,passes){
         const byTop=new Map(),near=new Map(),incident=new Map();
         for(const edge of walls){const pa=pairs.get(edge.a.key),pb=pairs.get(edge.b.key);if(!pa||!pb)continue;edge.a=pa.v;edge.b=pb.v;byTop.set(pa.top,pa);byTop.set(pb.top,pb);if(!near.has(pa.top))near.set(pa.top,new Set());if(!near.has(pb.top))near.set(pb.top,new Set());near.get(pa.top).add(pb.top);near.get(pb.top).add(pa.top)}
         for(let o=0;o<indices.length;o+=3)for(let k=0;k<3;k++){const i=indices[o+k];if(!byTop.has(i))continue;if(!incident.has(i))incident.set(i,[]);incident.get(i).push(o)}
-        const signed=o=>{const a=indices[o],b=indices[o+1],c=indices[o+2],ax=positions[a*3],ay=positions[a*3+1],bx=positions[b*3],by=positions[b*3+1],cx=positions[c*3],cy=positions[c*3+1];return(bx-ax)*(cy-ay)-(by-ay)*(cx-ax)},minimum=cell*cell*2e-5,order=[...near.keys()];
-        for(let pass=0;pass<passes;pass++){const sweep=pass&1?[...order].reverse():order;for(const top of sweep){const links=[...(near.get(top)||[])];if(links.length!==2)continue;const p=byTop.get(top),a=byTop.get(links[0]),b=byTop.get(links[1]);if(!p||!a||!b)continue;const ax=a.v.x-p.v.x,ay=a.v.y-p.v.y,bx=b.v.x-p.v.x,by=b.v.y-p.v.y,al=Math.hypot(ax,ay),bl=Math.hypot(bx,by);if(al<1e-6||bl<1e-6)continue;const dot=Math.max(-1,Math.min(1,(ax*bx+ay*by)/(al*bl))),turn=Math.PI-Math.acos(dot),weight=1-smooth01(.50,1.30,turn);if(weight<=0)continue;let dx=((a.v.x+b.v.x)*.5-p.v.x)*.22*weight,dy=((a.v.y+b.v.y)*.5-p.v.y)*.22*weight;const length=Math.hypot(dx,dy),limit=.14;if(length>limit){dx*=limit/length;dy*=limit/length}const oldX=p.v.x,oldY=p.v.y,oldPX=positions[p.top*3],oldPY=positions[p.top*3+1],newX=oldX+dx,newY=oldY+dy,newPX=(newX-centerX)*cell,newPY=(centerY-newY)*cell;p.v.x=newX;p.v.y=newY;positions[p.top*3]=positions[p.bottom*3]=newPX;positions[p.top*3+1]=positions[p.bottom*3+1]=newPY;let valid=true;for(const o of incident.get(top)||[])if(signed(o)<=minimum){valid=false;break}if(!valid){p.v.x=oldX;p.v.y=oldY;positions[p.top*3]=positions[p.bottom*3]=oldPX;positions[p.top*3+1]=positions[p.bottom*3+1]=oldPY}}}
+        const loops=[],visited=new Set();
+        for(const start of near.keys()){
+          if(visited.has(start)||(near.get(start)||new Set()).size!==2)continue;
+          const loop=[];let previous=-1,current=start,closed=false;
+          for(let guard=0;guard<=near.size;guard++){
+            if(visited.has(current)&&current!==start){loop.length=0;break}
+            if(current===start&&loop.length){closed=true;break}
+            visited.add(current);const point=byTop.get(current),links=[...(near.get(current)||[])];if(!point||links.length!==2){loop.length=0;break}
+            loop.push(point);const next=links[0]===previous?links[1]:links[0];previous=current;current=next;
+          }
+          if(closed&&loop.length>=4)loops.push(loop)
+        }
+        const signed=o=>{const a=indices[o],b=indices[o+1],c=indices[o+2],ax=positions[a*3],ay=positions[a*3+1],bx=positions[b*3],by=positions[b*3+1],cx=positions[c*3],cy=positions[c*3+1];return(bx-ax)*(cy-ay)-(by-ay)*(cx-ax)},order=[...near.keys()];
+        // First regularise uneven marching-squares samples.  This short local
+        // relaxation separates near-duplicate crossings before the wider
+        // physical-distance fit removes the remaining contour chatter.
+        for(let pass=0;pass<96;pass++)for(const top of(pass&1?[...order].reverse():order)){const links=[...(near.get(top)||[])];if(links.length!==2)continue;const p=byTop.get(top),a=byTop.get(links[0]),b=byTop.get(links[1]);if(!p||!a||!b)continue;const ax=a.v.x-p.v.x,ay=a.v.y-p.v.y,bx=b.v.x-p.v.x,by=b.v.y-p.v.y,al=Math.hypot(ax,ay),bl=Math.hypot(bx,by);if(al<1e-6||bl<1e-6)continue;const dot=Math.max(-1,Math.min(1,(ax*bx+ay*by)/(al*bl))),turn=Math.PI-Math.acos(dot),weight=1-smooth01(.55,1.38,turn);if(weight<=0)continue;let dx=((a.v.x+b.v.x)*.5-p.v.x)*.20*weight,dy=((a.v.y+b.v.y)*.5-p.v.y)*.20*weight,length=Math.hypot(dx,dy);if(length>.12){dx*=.12/length;dy*=.12/length}const oldX=p.v.x,oldY=p.v.y,oldPX=positions[p.top*3],oldPY=positions[p.top*3+1],x=oldX+dx,y=oldY+dy;p.v.x=x;p.v.y=y;positions[p.top*3]=positions[p.bottom*3]=(x-centerX)*cell;positions[p.top*3+1]=positions[p.bottom*3+1]=(centerY-y)*cell;let valid=true;for(const o of incident.get(top)||[])if(signed(o)<0){valid=false;break}if(!valid){p.v.x=oldX;p.v.y=oldY;positions[p.top*3]=positions[p.bottom*3]=oldPX;positions[p.top*3+1]=positions[p.bottom*3+1]=oldPY}}
+        const original=new Map();
+        for(const loop of loops)for(const p of loop)original.set(p.top,[p.v.x,p.v.y]);
+        const metric=coords=>{const cumulative=[0];for(let i=0;i<coords.length;i++){const a=coords[i],b=coords[(i+1)%coords.length];cumulative.push(cumulative.at(-1)+Math.hypot(b.x-a.x,b.y-a.y))}return{cumulative,total:cumulative.at(-1)}};
+        const at=(coords,m,distance)=>{const n=coords.length,total=m.total;if(total<1e-8)return{x:coords[0].x,y:coords[0].y};distance=((distance%total)+total)%total;let lo=0,hi=n;while(lo+1<hi){const mid=(lo+hi)>>1;if(m.cumulative[mid]<=distance)lo=mid;else hi=mid}const next=(lo+1)%n,a=coords[lo],b=coords[next],length=m.cumulative[lo+1]-m.cumulative[lo],t=length>1e-8?(distance-m.cumulative[lo])/length:0;return{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t}};
+        const featureWeights=(coords,m)=>{
+          const n=coords.length,coarse=Math.min(m.total*.18,Math.max(10,Math.min(36,1/cell))),spread=Math.min(m.total*.06,Math.max(3,Math.min(10,.25/cell))),base=new Float32Array(n),out=new Float32Array(n);
+          for(let i=0;i<n;i++){const p=coords[i],before=at(coords,m,m.cumulative[i]-coarse),after=at(coords,m,m.cumulative[i]+coarse),ax=p.x-before.x,ay=p.y-before.y,bx=after.x-p.x,by=after.y-p.y,al=Math.hypot(ax,ay),bl=Math.hypot(bx,by),turn=al>1e-7&&bl>1e-7?Math.acos(Math.max(-1,Math.min(1,(ax*bx+ay*by)/(al*bl)))):Math.PI;base[i]=1-smooth01(THREE.MathUtils.degToRad(28),THREE.MathUtils.degToRad(52),turn)}
+          for(let i=0;i<n;i++){let weight=base[i];for(const direction of[-1,1]){let travelled=0,j=i;while(travelled<spread){const next=(j+direction+n)%n,a=coords[j],b=coords[next];travelled+=Math.hypot(b.x-a.x,b.y-a.y);if(travelled>spread)break;weight=Math.min(weight,base[next]);j=next}}out[i]=weight}return out
+        };
+        for(let pass=0;pass<passes;pass++)for(const loop of loops){
+          const coords=loop.map(p=>({x:p.v.x,y:p.v.y})),m=metric(coords);if(m.total<1e-5)continue;const radius=Math.min(m.total*.16,Math.max(6,Math.min(24,.65/cell)));if(radius<1)continue;const feature=featureWeights(coords,m),proposed=[];
+          for(let i=0;i<coords.length;i++){
+            const p=coords[i];let s0=0,s2=0,s4=0,x0=0,x2=0,y0=0,y2=0;
+            for(let j=-6;j<=6;j++){const s=radius*j/6,u=Math.abs(j)/6,weight=(1-u*u)**2,q=at(coords,m,m.cumulative[i]+s),ss=s*s;s0+=weight;s2+=weight*ss;s4+=weight*ss*ss;x0+=weight*q.x;x2+=weight*ss*q.x;y0+=weight*q.y;y2+=weight*ss*q.y}
+            const denominator=s0*s4-s2*s2,fitX=denominator>1e-9?(x0*s4-x2*s2)/denominator:p.x,fitY=denominator>1e-9?(y0*s4-y2*s2)/denominator:p.y,tangentSpan=Math.min(radius*.65,Math.max(2,.22/cell)),before=at(coords,m,m.cumulative[i]-tangentSpan),after=at(coords,m,m.cumulative[i]+tangentSpan),tx=after.x-before.x,ty=after.y-before.y,length=Math.hypot(tx,ty)||1,ux=tx/length,uy=ty/length,nx=-uy,ny=ux,normalMove=(fitX-p.x)*nx+(fitY-p.y)*ny,previous=coords[(i+coords.length-1)%coords.length],next=coords[(i+1)%coords.length],midX=(previous.x+next.x)*.5-p.x,midY=(previous.y+next.y)*.5-p.y,tangentMove=midX*ux+midY*uy;let dx=(nx*normalMove*.22+ux*tangentMove*.25)*feature[i],dy=(ny*normalMove*.22+uy*tangentMove*.25)*feature[i],step=Math.hypot(dx,dy);
+            if(step>.12){dx*=.12/step;dy*=.12/step}const origin=original.get(loop[i].top),totalX=p.x+dx-origin[0],totalY=p.y+dy-origin[1],total=Math.hypot(totalX,totalY);if(total>.20){dx=origin[0]+totalX*.20/total-p.x;dy=origin[1]+totalY*.20/total-p.y}proposed.push([dx,dy])
+          }
+          const baseline=new Map();for(const p of loop)for(const o of incident.get(p.top)||[])if(!baseline.has(o))baseline.set(o,signed(o));let alpha=1,valid=false;
+          for(let attempt=0;attempt<7&&!valid;attempt++){
+            for(let i=0;i<loop.length;i++){const p=loop[i],x=coords[i].x+proposed[i][0]*alpha,y=coords[i].y+proposed[i][1]*alpha;p.v.x=x;p.v.y=y;positions[p.top*3]=positions[p.bottom*3]=(x-centerX)*cell;positions[p.top*3+1]=positions[p.bottom*3+1]=(centerY-y)*cell}
+            valid=true;for(const [o,before] of baseline){const after=signed(o);if(before>=0?after<0:after>0){valid=false;break}}if(!valid)alpha*=.5
+          }
+          if(!valid)for(let i=0;i<loop.length;i++){const p=loop[i],q=coords[i];p.v.x=q.x;p.v.y=q.y;positions[p.top*3]=positions[p.bottom*3]=(q.x-centerX)*cell;positions[p.top*3+1]=positions[p.bottom*3+1]=(centerY-q.y)*cell}
+        }
+        const finalWeights=new Map();for(const loop of loops){const coords=loop.map(p=>({x:p.v.x,y:p.v.y})),m=metric(coords),weights=featureWeights(coords,m);for(let i=0;i<loop.length;i++)finalWeights.set(loop[i].v.key,weights[i])}
+        return{loops:loops.map(loop=>loop.map(p=>p.v)),featureWeights:finalWeights}
       }
       const x0=Math.max(0,g.minX-2),x1=Math.min(g.w-2,g.maxX+1),y0=Math.max(0,g.minY-2),y1=Math.min(g.h-2,g.maxY+1);
       for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
@@ -429,28 +477,23 @@
       // Fair every contour enough to remove the last one-pixel marching-squares
       // steps from the exported wall.  The curvature guard inside the fairing
       // keeps points, hooks, and small cut-outs from being rounded away.
-      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,8);
-      // Derive the display frame over a fixed real-world distance.  A fixed
-      // vertex count changes character with trace resolution and leaves long,
-      // shallow arcs looking ribbed at a grazing camera angle.
-      const boundaryPrev=new Map(),boundaryNext=new Map(),boundaryVertices=new Map(),fallbackNormals=new Map();
+      const wallSegments=[...boundary.values()].filter(s=>s.count===1),fairing=smoothBoundarySafely(wallSegments,2),boundaryLoops=fairing.loops,boundaryFeatureWeights=fairing.featureWeights;
+      // Derive the display frame from exact, symmetric arc-length samples.
+      // Unlike a changing set of whole vertices, this frame evolves
+      // continuously along the contour and cannot create grazing-angle bands.
+      const boundaryVertices=new Map(),fallbackNormals=new Map();
       const addFallback=(v,nx,ny)=>{const n=fallbackNormals.get(v.key)||[0,0];n[0]+=nx;n[1]+=ny;fallbackNormals.set(v.key,n)};
-      for(const edge of wallSegments){boundaryVertices.set(edge.a.key,edge.a);boundaryVertices.set(edge.b.key,edge.b);boundaryNext.set(edge.a.key,edge.b);boundaryPrev.set(edge.b.key,edge.a);const dx=edge.b.x-edge.a.x,dy=edge.a.y-edge.b.y;addFallback(edge.a,dy,-dx);addFallback(edge.b,dy,-dx)}
+      for(const edge of wallSegments){boundaryVertices.set(edge.a.key,edge.a);boundaryVertices.set(edge.b.key,edge.b);const dx=edge.b.x-edge.a.x,dy=edge.a.y-edge.b.y;addFallback(edge.a,dy,-dx);addFallback(edge.b,dy,-dx)}
       const orientNormal=(v,nx,ny)=>{const length=Math.hypot(nx,ny)||1;nx/=length;ny/=length;const plus=bilinear(g.field,g.w,g.h,v.x+nx*.5,v.y-ny*.5),minus=bilinear(g.field,g.w,g.h,v.x-nx*.5,v.y+ny*.5);return plus>minus?[-nx,-ny]:[nx,ny]};
       const rawBoundaryNormals=new Map();for(const [key,v] of boundaryVertices){const n=fallbackNormals.get(key)||[1,0];rawBoundaryNormals.set(key,orientNormal(v,n[0],n[1]))}
-      // Fit a tangent with PCA over roughly 1.25 mm of contour on each side.
-      // This averages raster-scale direction changes rather than merely hiding
-      // them with a short chord.  A generous turn gate passes 45-degree grid
-      // quantisation but still stops the fit at genuine cusps and hard corners.
-      const boundaryNormals=new Map(),normalGate=Math.cos(THREE.MathUtils.degToRad(58)),normalRadiusPx=Math.max(6,Math.min(30,1.25/cell));
-      for(const [key,v] of boundaryVertices){
-        const raw=rawBoundaryNormals.get(key),fallback=fallbackNormals.get(key)||[1,0],points=[v];let before=v,after=v;
-        const walk=(start,links,side)=>{let current=start,distance=0;for(let step=0;step<72&&distance<normalRadiusPx;step++){const candidate=links.get(current.key),n=candidate&&rawBoundaryNormals.get(candidate.key);if(!candidate||candidate.key===v.key||!n||raw[0]*n[0]+raw[1]*n[1]<normalGate)break;const length=Math.hypot(candidate.x-current.x,candidate.y-current.y);if(length<1e-7)break;distance+=length;points.push(candidate);current=candidate}if(side<0)before=current;else after=current};
-        walk(v,boundaryPrev,-1);walk(v,boundaryNext,1);
-        let tx=after.x-before.x,ty=before.y-after.y;
-        if(points.length>=5){let mx=0,my=0;for(const p of points){mx+=p.x;my-=p.y}mx/=points.length;my/=points.length;let xx=0,xy=0,yy=0;for(const p of points){const dx=p.x-mx,dy=-p.y-my;xx+=dx*dx;xy+=dx*dy;yy+=dy*dy}if(xx+yy>1e-8){const angle=.5*Math.atan2(2*xy,xx-yy),px=Math.cos(angle),py=Math.sin(angle);if(px*tx+py*ty<0){tx=-px;ty=-py}else{tx=px;ty=py}}}
-        if(Math.hypot(tx,ty)<1e-7){tx=-fallback[1];ty=fallback[0]}boundaryNormals.set(key,orientNormal(v,ty,-tx));
+      const boundaryNormals=new Map(),normalRadiusPx=Math.max(8,Math.min(64,2.35/cell));
+      const loopMetric=coords=>{const cumulative=[0];for(let i=0;i<coords.length;i++){const a=coords[i],b=coords[(i+1)%coords.length];cumulative.push(cumulative.at(-1)+Math.hypot(b.x-a.x,b.y-a.y))}return{cumulative,total:cumulative.at(-1)}};
+      const loopAt=(coords,m,distance)=>{const n=coords.length,total=m.total;if(total<1e-8)return coords[0];distance=((distance%total)+total)%total;let lo=0,hi=n;while(lo+1<hi){const mid=(lo+hi)>>1;if(m.cumulative[mid]<=distance)lo=mid;else hi=mid}const next=(lo+1)%n,a=coords[lo],b=coords[next],length=m.cumulative[lo+1]-m.cumulative[lo],t=length>1e-8?(distance-m.cumulative[lo])/length:0;return{x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t}};
+      for(const loop of boundaryLoops){
+        const coords=loop.map(v=>({x:v.x,y:v.y})),m=loopMetric(coords);if(m.total<1e-7)continue;
+        for(let i=0;i<loop.length;i++){const v=loop[i],feature=boundaryFeatureWeights.get(v.key)??1,radius=Math.min(m.total*.16,normalRadiusPx*(.26+.74*feature)),before=loopAt(coords,m,m.cumulative[i]-radius),after=loopAt(coords,m,m.cumulative[i]+radius);let tx=after.x-before.x,ty=before.y-after.y;const fallback=fallbackNormals.get(v.key)||[1,0];if(Math.hypot(tx,ty)<1e-7){tx=-fallback[1];ty=fallback[0]}boundaryNormals.set(v.key,orientNormal(v,ty,-tx))}
       }
+      for(const [key,n] of rawBoundaryNormals)if(!boundaryNormals.has(key))boundaryNormals.set(key,n);
       const segments=[],segmentMeta=[],buckets=new Map(),bevelPixels=edgeWidth>0?edgeWidth/cell:0,bucketSize=Math.max(4,Math.ceil(bevelPixels+2));
       for(const edge of wallSegments){const a=[edge.a.x,edge.a.y],b=[edge.b.x,edge.b.y];if(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8)continue;const index=segments.length;segments.push([a,b]);segmentMeta.push(edge);const bx0=Math.floor(Math.min(a[0],b[0])/bucketSize),bx1=Math.floor(Math.max(a[0],b[0])/bucketSize),by0=Math.floor(Math.min(a[1],b[1])/bucketSize),by1=Math.floor(Math.max(a[1],b[1])/bucketSize);for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){const key=bx+'|'+by;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(index)}}
       const distanceCache=new Float32Array(g.w*g.h),widthCache=new Float32Array(g.w*g.h),outwardX=new Float32Array(g.w*g.h),outwardY=new Float32Array(g.w*g.h),seen=new Int32Array(segments.length);distanceCache.fill(-1);widthCache.fill(edgeWidth);let stamp=0;
@@ -493,11 +536,19 @@
       // Give the wall its own seam vertices.  This keeps irregular top-face
       // triangles from twisting the wall normals into a striped/scalloped edge.
       for(const seg of wallSegments){const a=wallPair(seg.a),b=wallPair(seg.b);addFace(a.top,a.bottom,b.bottom);addFace(a.top,b.bottom,b.top)}
+      // Now that contour fairing and all Z values are final, discard only faces
+      // that are still genuinely zero-area.  Faces opened by the fairing stay
+      // in the watertight surface instead of becoming triangular pinholes.
+      let kept=0;for(let o=0;o<indices.length;o+=3){const a=indices[o],b=indices[o+1],c=indices[o+2],ax=positions[b*3]-positions[a*3],ay=positions[b*3+1]-positions[a*3+1],az=positions[b*3+2]-positions[a*3+2],bx=positions[c*3]-positions[a*3],by=positions[c*3+1]-positions[a*3+1],bz=positions[c*3+2]-positions[a*3+2],cx=ay*bz-az*by,cy=az*bx-ax*bz,cz=ax*by-ay*bx;if(cx*cx+cy*cy+cz*cz<=1e-18)continue;indices[kept++]=a;indices[kept++]=b;indices[kept++]=c}indices.length=kept;
       if(!indices.length)return null;const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setIndex(indices);geo.computeBoundingBox();const actualW=geo.boundingBox.max.x-geo.boundingBox.min.x,scale=modelW/Math.max(.001,actualW);geo.scale(scale,scale,1);geo.computeVertexNormals();const normals=geo.getAttribute('normal');
       // The surface geometry remains the exact watertight print mesh, while its
       // display normals come from the analytic chamfer derivative and stable
       // contour frame instead of irregular grid-triangle averages.
-      if(!reliefDepth&&edgeWidth>0&&style!=='flat')for(const p of samples){const d=continuousDistance(p.v),w=p.v.id>=0?widthCache[p.v.id]:edgeWidth,s=w>0?Math.max(0,Math.min(1,d/w)):1,n=p.v.id>=0?[outwardX[p.v.id],outwardY[p.v.id]]:(boundaryNormals.get(p.v.key)||[0,0]),derivative=style==='reference'?referenceProfileSlope(s):6*s*(1-s),slope=bevelRise/Math.max(cell*.25,w*scale)*derivative,hyp=Math.hypot(n[0]*slope,n[1]*slope,1);if(s>=.9999||slope<1e-6||Math.hypot(n[0],n[1])<.5){normals.setXYZ(p.top,0,0,1);normals.setXYZ(p.bottom,0,0,-1)}else{normals.setXYZ(p.top,n[0]*slope/hyp,n[1]*slope/hyp,1/hyp);normals.setXYZ(p.bottom,n[0]*slope/hyp,n[1]*slope/hyp,-1/hyp)}}
+      // Share the exact wall frame at the rim.  The first 0.16 mm then eases
+      // from a nearly vertical fillet normal into the analytic chamfer normal,
+      // removing the dark perimeter seam without swelling the straight wall.
+      if(edgeWidth>0&&style!=='flat')for(const p of samples)if(p.v.id<0){const n=boundaryNormals.get(p.v.key);if(n){normals.setXYZ(p.top,n[0],n[1],0);normals.setXYZ(p.bottom,n[0],n[1],0)}}
+      if(!reliefDepth&&edgeWidth>0&&style!=='flat')for(const p of samples){if(p.v.id<0)continue;const d=continuousDistance(p.v),w=widthCache[p.v.id],s=w>0?Math.max(0,Math.min(1,d/w)):1,n=[outwardX[p.v.id],outwardY[p.v.id]],derivative=style==='reference'?referenceProfileSlope(s):6*s*(1-s),analytic=bevelRise/Math.max(cell*.25,w*scale)*derivative,transition=Math.min(.16,w*.14),blend=transition>1e-6?smooth01(0,transition,d):1,slope=style==='reference'?Math.max(analytic,(1-blend)*32):analytic,hyp=Math.hypot(n[0]*slope,n[1]*slope,1);if(s>=.9999||slope<1e-6||Math.hypot(n[0],n[1])<.5){normals.setXYZ(p.top,0,0,1);normals.setXYZ(p.bottom,0,0,-1)}else{normals.setXYZ(p.top,n[0]*slope/hyp,n[1]*slope/hyp,1/hyp);normals.setXYZ(p.bottom,n[0]*slope/hyp,n[1]*slope/hyp,-1/hyp)}}
       for(const [key,p] of wallPairs){const n=boundaryNormals.get(key);if(!n)continue;normals.setXYZ(p.top,n[0],n[1],0);normals.setXYZ(p.bottom,n[0],n[1],0)}normals.needsUpdate=true;geo.computeBoundingBox();geo.computeBoundingSphere();
       return {geo,triangles:indices.length/3,height:geo.boundingBox.max.y-geo.boundingBox.min.y,edgeWidth,axial:bevelRise,reliefDepth};
     }
