@@ -77,7 +77,7 @@
             <div class="control"><label for="mode">Detection method</label><output></output><select id="mode"><option value="auto">Automatic emblem isolation</option><option value="color">Remove sampled background</option><option value="metal">Metal / low-saturation artwork</option><option value="dark">Keep darker areas</option><option value="light">Keep lighter areas</option></select></div>
             <div class="control"><label for="resolution">Trace quality</label><output id="resolutionOut">1200 px</output><input id="resolution" type="range" min="400" max="1200" value="1200" step="100"></div>
             <div class="control"><label for="smooth">Curve cleanup</label><output id="smoothOut">3</output><input id="smooth" type="range" min="0" max="10" value="3"></div>
-            <div class="control"><label for="bevel">Chamfer width</label><output id="bevelOut">1.5 mm</output><input id="bevel" type="range" min="0.2" max="3.0" value="1.5" step="0.1"><small>Higher carries the smooth chamfer farther across the face.</small></div>
+            <div class="control"><label for="bevel">Chamfer width</label><output id="bevelOut">1.4 mm</output><input id="bevel" type="range" min="0.2" max="3.0" value="1.4" step="0.1"><small>Sets the sloped edge width; fine details narrow it automatically.</small></div>
             <div class="control"><label for="relief">Optional surface relief</label><output id="reliefOut">0%</output><input id="relief" type="range" min="0" max="100" value="0" step="5"><small>Use sparingly: reflections in metallic artwork are often lighting, not real surface geometry.</small></div>
             <button class="secondary" id="invert">Swap kept and removed areas</button>
           </div>
@@ -113,13 +113,13 @@
     const $=id=>document.getElementById(id);
     const stage=$('threeView'),source=$('originalView'),work=$('work'),cutout=$('cutoutView');
     const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,preserveDrawingBuffer:true});
-    renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.78;renderer.shadowMap.enabled=true;stage.append(renderer.domElement);
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.88;renderer.shadowMap.enabled=true;stage.append(renderer.domElement);
     const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(34,1,.1,2500),controls=new OrbitControls(camera,renderer.domElement);
     controls.enableDamping=true;controls.dampingFactor=.08;controls.target.set(0,0,0);
-    scene.add(new THREE.HemisphereLight(0xffffff,0x25141b,1.15));
-    const key=new THREE.DirectionalLight(0xffffff,2.15);key.position.set(-75,-55,120);scene.add(key);
-    const fill=new THREE.DirectionalLight(0xdbe5ff,.72);fill.position.set(80,35,65);scene.add(fill);
-    const rim=new THREE.DirectionalLight(0xffffff,.26);rim.position.set(50,80,12);scene.add(rim);
+    scene.add(new THREE.HemisphereLight(0xffffff,0x252932,.88));
+    const key=new THREE.DirectionalLight(0xffffff,1.35);key.position.set(-75,-55,120);scene.add(key);
+    const fill=new THREE.DirectionalLight(0xdbe5ff,.38);fill.position.set(80,35,65);scene.add(fill);
+    const rim=new THREE.DirectionalLight(0xffffff,.08);rim.position.set(50,80,12);scene.add(rim);
     const grid=new THREE.GridHelper(260,26,0x55584f,0x2b2d28);grid.rotation.x=Math.PI/2;grid.position.z=-1.4;scene.add(grid);
 
     let mesh=null,lastGeometry=null,currentMask=null,imageReady=false,inverted=false,pickMode=false,currentView='cutout',activePreset='ornamental',timer=0,firstFit=true,sourceName='artwork';
@@ -383,16 +383,23 @@
       const style=ui.edgeStyle.value,requestedEdge=style==='flat'?0:style==='soft'?Math.min(+ui.bevel.value*.55,half*.8):Math.min(+ui.bevel.value,Math.max(.2,modelW*.025)),edgeWidth=requestedEdge;
       // Keep a visible, printable centre wall.  The reference edge is a shallow
       // chamfer, not two domed faces meeting at a paper-thin waist.
-      const minimumCore=style==='flat'?half:Math.min(half,Math.max(.22,totalDepth*.14)),bevelRise=style==='flat'?0:Math.min(half-minimumCore,edgeWidth*(style==='soft'?.34:.45)),coreHalf=half-bevelRise,reliefDepth=g.relief?Math.min(.62,totalDepth*.22)*(+ui.relief.value/100):0;
-      const positions=[],indices=[],pairs=new Map(),crossings=new Map(),boundary=new Map(),samples=[];
+      const minimumCore=style==='flat'?half:Math.min(half,Math.max(.22,totalDepth*.14)),bevelRise=style==='flat'?0:Math.min(half-minimumCore,edgeWidth*(style==='soft'?.34:.40)),coreHalf=half-bevelRise,reliefDepth=g.relief?Math.min(.62,totalDepth*.22)*(+ui.relief.value/100):0;
+      const positions=[],indices=[],pairs=new Map(),wallPairs=new Map(),wallNormalSums=new Map(),crossings=new Map(),boundary=new Map(),samples=[];
       const base=id=>({key:'g'+id,id,x:id%g.w,y:(id/g.w)|0,value:g.field[id],boundary:Math.abs(g.field[id]-.5)<1e-7});
       function cross(a,b){const lo=Math.min(a.id,b.id),hi=Math.max(a.id,b.id),key='e'+lo+'_'+hi;if(crossings.has(key))return crossings.get(key);const t=(.5-a.value)/(b.value-a.value),v={key,id:-1,x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,value:.5,boundary:true};crossings.set(key,v);return v}
       function clip(poly){const out=[];for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length],insideA=a.value>=.5,insideB=b.value>=.5;if(insideA&&insideB)out.push(b);else if(insideA&&!insideB)out.push(cross(a,b));else if(!insideA&&insideB){out.push(cross(a,b));out.push(b)}}return out.filter((v,i,a)=>!i||v.key!==a[i-1].key)}
-      // A single-curvature C2 chamfer: finite at the wall, nearly 45 degrees at
-      // normal settings, then continuously eased into the face.  Unlike the old
-      // S-curve it cannot form a separate-looking ridge inside the edge band.
-      function referenceProfile(s){s=Math.max(0,Math.min(1,s));const s2=s*s,s3=s2*s,s4=s3*s,s5=s4*s,m=2.2;return m*s+(10-6*m)*s3+(8*m-15)*s4+(6-3*m)*s5}
+      // A manufactured chamfer: a short C2 wall transition, a genuinely planar
+      // middle, and a C2 ease into the face.  Keeping most of the band linear
+      // avoids the rolled bead/highlight produced by the former all-curved edge.
+      function referenceProfile(s){
+        s=Math.max(0,Math.min(1,s));const a=.14,b=.72,m0=3,m=(2-a*m0)/(1+b-a),F=t=>{const t2=t*t,t4=t2*t2;return t4*(t2-3*t+2.5)},ha=a*(m0+m)*.5;
+        if(s<=a)return m0*s+(m-m0)*a*F(s/a);
+        if(s<=b)return ha+m*(s-a);
+        const hb=ha+m*(b-a),c=1-b,t=(s-b)/c;return hb+m*((s-b)-c*F(t));
+      }
       function pair(v){if(pairs.has(v.key))return pairs.get(v.key);const x=(v.x-centerX)*cell,y=(centerY-v.y)*cell,top=positions.length/3;positions.push(x,y,0);const bottom=positions.length/3;positions.push(x,y,0);const p={top,bottom,v};pairs.set(v.key,p);samples.push(p);return p}
+      function wallPair(v){if(wallPairs.has(v.key))return wallPairs.get(v.key);const source=pair(v),top=positions.length/3;positions.push(positions[source.top*3],positions[source.top*3+1],positions[source.top*3+2]);const bottom=positions.length/3;positions.push(positions[source.bottom*3],positions[source.bottom*3+1],positions[source.bottom*3+2]);const p={top,bottom,v};wallPairs.set(v.key,p);return p}
+      function addWallNormal(v,nx,ny){const n=wallNormalSums.get(v.key)||[0,0];n[0]+=nx;n[1]+=ny;wallNormalSums.set(v.key,n)}
       function area(poly){let a=0;for(let i=0;i<poly.length;i++){const p=poly[i],q=poly[(i+1)%poly.length];a+=(p.x-centerX)*(centerY-q.y)-(q.x-centerX)*(centerY-p.y)}return a/2}
       function addFace(a,b,c){const ax=positions[b*3]-positions[a*3],ay=positions[b*3+1]-positions[a*3+1],az=positions[b*3+2]-positions[a*3+2],bx=positions[c*3]-positions[a*3],by=positions[c*3+1]-positions[a*3+1],bz=positions[c*3+2]-positions[a*3+2],cx=ay*bz-az*by,cy=az*bx-ax*bz,cz=ax*by-ay*bx;if(cx*cx+cy*cy+cz*cz>1e-18)indices.push(a,b,c)}
       function addPolygon(poly){if(poly.length<3)return;if(area(poly)<0)poly.reverse();const ps=poly.map(pair);for(let i=1;i<ps.length-1;i++){addFace(ps[0].top,ps[i].top,ps[i+1].top);addFace(ps[0].bottom,ps[i+1].bottom,ps[i].bottom)}for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];if(!a.boundary||!b.boundary||a.key===b.key||Math.hypot(a.x-b.x,a.y-b.y)<1e-8)continue;const key=a.key<b.key?a.key+'|'+b.key:b.key+'|'+a.key;if(boundary.has(key))boundary.get(key).count++;else boundary.set(key,{a,b,count:1})}}
@@ -416,7 +423,7 @@
         const centreInside=(a.value+b.value+c.value+d.value)*.25>=.5,useAC=(code===5)===centreInside;
         if(useAC){addPolygon(clip([a,b,c]));addPolygon(clip([a,c,d]))}else{addPolygon(clip([a,b,d]));addPolygon(clip([b,c,d]))}
       }
-      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,mask.darkChrome?12:3);
+      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,mask.darkChrome?8:3);
       const segments=[],buckets=new Map(),bevelPixels=edgeWidth>0?edgeWidth/cell:0,bucketSize=Math.max(4,Math.ceil(bevelPixels+2));
       for(const edge of wallSegments){const a=[edge.a.x,edge.a.y],b=[edge.b.x,edge.b.y];if(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8)continue;const index=segments.length;segments.push([a,b]);const bx0=Math.floor(Math.min(a[0],b[0])/bucketSize),bx1=Math.floor(Math.max(a[0],b[0])/bucketSize),by0=Math.floor(Math.min(a[1],b[1])/bucketSize),by1=Math.floor(Math.max(a[1],b[1])/bucketSize);for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){const key=bx+'|'+by;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(index)}}
       const distanceCache=new Float32Array(g.w*g.h),widthCache=new Float32Array(g.w*g.h),seen=new Int32Array(segments.length);distanceCache.fill(-1);widthCache.fill(edgeWidth);let stamp=0;
@@ -449,14 +456,16 @@
         widthCache.set(blended)
       }
       for(const p of samples){
-        const d=continuousDistance(p.v),w=p.v.id>=0?widthCache[p.v.id]:edgeWidth,s=w>0?Math.max(0,Math.min(1,d/w)):1,profile=style==='reference'?referenceProfile(s):style==='soft'?s*s*(3-2*s):1,edgeRise=style==='reference'?Math.min(bevelRise,w*.52):bevelRise,faceBlend=style==='reference'?smooth01(.58,.96,s):0,localRise=edgeRise+(bevelRise-edgeRise)*faceBlend,baseZ=edgeWidth>0?coreHalf+localRise*profile:half;
+        const d=continuousDistance(p.v),w=p.v.id>=0?widthCache[p.v.id]:edgeWidth,s=w>0?Math.max(0,Math.min(1,d/w)):1,profile=style==='reference'?referenceProfile(s):style==='soft'?s*s*(3-2*s):1,baseZ=edgeWidth>0?coreHalf+bevelRise*profile:half;
         // Fade relief into the inner half of the chamfer itself.  The former
         // full-height guard ring produced a second shoulder around every hole.
         const gate=reliefDepth?smooth01(.56,.98,s):0,rv=g.relief?bilinear(g.relief,g.w,g.h,p.v.x,p.v.y):1;
         positions[p.top*3+2]=baseZ-reliefDepth*gate*(1-rv);positions[p.bottom*3+2]=-baseZ;
       }
-      for(const seg of wallSegments){const a=pair(seg.a),b=pair(seg.b);addFace(a.top,a.bottom,b.bottom);addFace(a.top,b.bottom,b.top)}
-      if(!indices.length)return null;const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setIndex(indices);geo.computeBoundingBox();const actualW=geo.boundingBox.max.x-geo.boundingBox.min.x,scale=modelW/Math.max(.001,actualW);geo.scale(scale,scale,1);geo.computeVertexNormals();geo.computeBoundingBox();geo.computeBoundingSphere();
+      // Give the wall its own seam vertices.  This keeps irregular top-face
+      // triangles from twisting the wall normals into a striped/scalloped edge.
+      for(const seg of wallSegments){const a=wallPair(seg.a),b=wallPair(seg.b);addFace(a.top,a.bottom,b.bottom);addFace(a.top,b.bottom,b.top);const dx=positions[b.top*3]-positions[a.top*3],dy=positions[b.top*3+1]-positions[a.top*3+1],length=Math.hypot(dx,dy)||1,nx=dy/length,ny=-dx/length;addWallNormal(seg.a,nx,ny);addWallNormal(seg.b,nx,ny)}
+      if(!indices.length)return null;const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setIndex(indices);geo.computeBoundingBox();const actualW=geo.boundingBox.max.x-geo.boundingBox.min.x,scale=modelW/Math.max(.001,actualW);geo.scale(scale,scale,1);geo.computeVertexNormals();const normals=geo.getAttribute('normal');for(const [key,p] of wallPairs){const sum=wallNormalSums.get(key)||[1,0],length=Math.hypot(sum[0],sum[1])||1,nx=sum[0]/length,ny=sum[1]/length;normals.setXYZ(p.top,nx,ny,0);normals.setXYZ(p.bottom,nx,ny,0)}normals.needsUpdate=true;geo.computeBoundingBox();geo.computeBoundingSphere();
       return {geo,triangles:indices.length/3,height:geo.boundingBox.max.y-geo.boundingBox.min.y,edgeWidth,axial:bevelRise,reliefDepth};
     }
 
@@ -471,7 +480,7 @@
       if(!mask){$('busy').hidden=true;$('export').disabled=true;$('useCutout').disabled=true;$('maskNote').className='maskNote warn';$('maskNote').innerHTML='<b>Nothing is selected.</b> Lower Background range or choose another preset.';return}
       currentMask=mask;drawCutout(mask);updateMaskMessage(mask);const out=geometryFromMask(mask);
       if(mesh){scene.remove(mesh);mesh.geometry.dispose();mesh.material.dispose();mesh=null}if(!out){$('busy').hidden=true;$('export').disabled=true;$('useCutout').disabled=true;return}
-      lastGeometry=out.geo;mesh=new THREE.Mesh(out.geo,new THREE.MeshStandardMaterial({color:0xd1d4d8,metalness:.34,roughness:.43,side:THREE.DoubleSide}));scene.add(mesh);grid.position.z=-(+ui.depth.value/2)-.18;
+      lastGeometry=out.geo;mesh=new THREE.Mesh(out.geo,new THREE.MeshStandardMaterial({color:0xc9cdd2,metalness:.10,roughness:.66,side:THREE.FrontSide}));scene.add(mesh);grid.position.z=-(+ui.depth.value/2)-.18;
       $('export').disabled=false;$('useCutout').disabled=false;$('busy').hidden=true;
       const height=out.height.toFixed(1);$('stageFoot').title=`${Math.round(out.triangles).toLocaleString()} triangles`;
       if(currentView==='three')$('stageMessage').innerHTML=`<b>${ui.width.value} × ${height} × ${(+ui.depth.value).toFixed(1)} mm</b> • ${mask.bodies} separate ${mask.bodies===1?'piece':'pieces'}`;
