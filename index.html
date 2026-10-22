@@ -433,12 +433,13 @@
       const boundaryPrev=new Map(),boundaryNext=new Map(),boundaryVertices=new Map(),fallbackNormals=new Map();
       const addFallback=(v,nx,ny)=>{const n=fallbackNormals.get(v.key)||[0,0];n[0]+=nx;n[1]+=ny;fallbackNormals.set(v.key,n)};
       for(const edge of wallSegments){boundaryVertices.set(edge.a.key,edge.a);boundaryVertices.set(edge.b.key,edge.b);boundaryNext.set(edge.a.key,edge.b);boundaryPrev.set(edge.b.key,edge.a);const dx=edge.b.x-edge.a.x,dy=edge.a.y-edge.b.y;addFallback(edge.a,dy,-dx);addFallback(edge.b,dy,-dx)}
-      const boundaryNormals=new Map(),cornerLimit=Math.cos(THREE.MathUtils.degToRad(35));
-      for(const [key,v] of boundaryVertices){
-        const prev=boundaryPrev.get(key),next=boundaryNext.get(key),fallback=fallbackNormals.get(key)||[1,0];let tx=-fallback[1],ty=fallback[0];
-        if(prev&&next){const inX=v.x-prev.x,inY=prev.y-v.y,outX=next.x-v.x,outY=v.y-next.y,inL=Math.hypot(inX,inY)||1,outL=Math.hypot(outX,outY)||1,corner=(inX*outX+inY*outY)/(inL*outL),oneX=next.x-prev.x,oneY=prev.y-next.y,prev2=boundaryPrev.get(prev.key),next2=boundaryNext.get(next.key);tx=oneX;ty=oneY;if(corner>cornerLimit&&prev2&&next2){tx=.75*oneX+.25*(next2.x-prev2.x);ty=.75*oneY+.25*(prev2.y-next2.y)}}
-        let length=Math.hypot(tx,ty)||1,nx=ty/length,ny=-tx/length;const plus=bilinear(g.field,g.w,g.h,v.x+nx*.5,v.y-ny*.5),minus=bilinear(g.field,g.w,g.h,v.x-nx*.5,v.y+ny*.5);if(plus>minus){nx=-nx;ny=-ny}boundaryNormals.set(key,[nx,ny]);
-      }
+      const orientNormal=(v,nx,ny)=>{const length=Math.hypot(nx,ny)||1;nx/=length;ny/=length;const plus=bilinear(g.field,g.w,g.h,v.x+nx*.5,v.y-ny*.5),minus=bilinear(g.field,g.w,g.h,v.x-nx*.5,v.y+ny*.5);return plus>minus?[-nx,-ny]:[nx,ny]};
+      const rawBoundaryNormals=new Map();for(const [key,v] of boundaryVertices){const n=fallbackNormals.get(key)||[1,0];rawBoundaryNormals.set(key,orientNormal(v,n[0],n[1]))}
+      // A +/-4 chord is about 0.6 mm at the default trace density.  It removes
+      // sub-pixel tangent chatter, while the raw-normal gate prevents the window
+      // from crossing deliberate hooks, points, or tight interior corners.
+      const boundaryNormals=new Map(),normalGate=Math.cos(THREE.MathUtils.degToRad(25));
+      for(const [key,v] of boundaryVertices){const raw=rawBoundaryNormals.get(key),fallback=fallbackNormals.get(key)||[1,0];let before=v,after=v;for(let step=0;step<4;step++){const candidate=boundaryPrev.get(before.key),n=candidate&&rawBoundaryNormals.get(candidate.key);if(!candidate||!n||raw[0]*n[0]+raw[1]*n[1]<normalGate)break;before=candidate}for(let step=0;step<4;step++){const candidate=boundaryNext.get(after.key),n=candidate&&rawBoundaryNormals.get(candidate.key);if(!candidate||!n||raw[0]*n[0]+raw[1]*n[1]<normalGate)break;after=candidate}const tx=after===before?-fallback[1]:after.x-before.x,ty=after===before?fallback[0]:before.y-after.y;boundaryNormals.set(key,orientNormal(v,ty,-tx))}
       const segments=[],segmentMeta=[],buckets=new Map(),bevelPixels=edgeWidth>0?edgeWidth/cell:0,bucketSize=Math.max(4,Math.ceil(bevelPixels+2));
       for(const edge of wallSegments){const a=[edge.a.x,edge.a.y],b=[edge.b.x,edge.b.y];if(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8)continue;const index=segments.length;segments.push([a,b]);segmentMeta.push(edge);const bx0=Math.floor(Math.min(a[0],b[0])/bucketSize),bx1=Math.floor(Math.max(a[0],b[0])/bucketSize),by0=Math.floor(Math.min(a[1],b[1])/bucketSize),by1=Math.floor(Math.max(a[1],b[1])/bucketSize);for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){const key=bx+'|'+by;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(index)}}
       const distanceCache=new Float32Array(g.w*g.h),widthCache=new Float32Array(g.w*g.h),outwardX=new Float32Array(g.w*g.h),outwardY=new Float32Array(g.w*g.h),seen=new Int32Array(segments.length);distanceCache.fill(-1);widthCache.fill(edgeWidth);let stamp=0;
