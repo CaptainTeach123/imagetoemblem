@@ -384,22 +384,25 @@
       // Keep a visible, printable centre wall.  The reference edge is a shallow
       // chamfer, not two domed faces meeting at a paper-thin waist.
       const minimumCore=style==='flat'?half:Math.min(half,Math.max(.22,totalDepth*.14)),bevelRise=style==='flat'?0:Math.min(half-minimumCore,edgeWidth*(style==='soft'?.34:.40)),coreHalf=half-bevelRise,reliefDepth=g.relief?Math.min(.62,totalDepth*.22)*(+ui.relief.value/100):0;
-      const positions=[],indices=[],pairs=new Map(),wallPairs=new Map(),wallNormalSums=new Map(),crossings=new Map(),boundary=new Map(),samples=[];
+      const positions=[],indices=[],pairs=new Map(),wallPairs=new Map(),crossings=new Map(),boundary=new Map(),samples=[];
       const base=id=>({key:'g'+id,id,x:id%g.w,y:(id/g.w)|0,value:g.field[id],boundary:Math.abs(g.field[id]-.5)<1e-7});
       function cross(a,b){const lo=Math.min(a.id,b.id),hi=Math.max(a.id,b.id),key='e'+lo+'_'+hi;if(crossings.has(key))return crossings.get(key);const t=(.5-a.value)/(b.value-a.value),v={key,id:-1,x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,value:.5,boundary:true};crossings.set(key,v);return v}
       function clip(poly){const out=[];for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length],insideA=a.value>=.5,insideB=b.value>=.5;if(insideA&&insideB)out.push(b);else if(insideA&&!insideB)out.push(cross(a,b));else if(!insideA&&insideB){out.push(cross(a,b));out.push(b)}}return out.filter((v,i,a)=>!i||v.key!==a[i-1].key)}
       // A manufactured chamfer: a short C2 wall transition, a genuinely planar
       // middle, and a C2 ease into the face.  Keeping most of the band linear
       // avoids the rolled bead/highlight produced by the former all-curved edge.
+      const profileA=.14,profileB=.72,profileM0=3,profileM=(2-profileA*profileM0)/(1+profileB-profileA);
+      const profileIntegral=t=>{const t2=t*t,t4=t2*t2;return t4*(t2-3*t+2.5)};
+      const profileEase=t=>t*t*t*(10+t*(-15+6*t));
       function referenceProfile(s){
-        s=Math.max(0,Math.min(1,s));const a=.14,b=.72,m0=3,m=(2-a*m0)/(1+b-a),F=t=>{const t2=t*t,t4=t2*t2;return t4*(t2-3*t+2.5)},ha=a*(m0+m)*.5;
-        if(s<=a)return m0*s+(m-m0)*a*F(s/a);
-        if(s<=b)return ha+m*(s-a);
-        const hb=ha+m*(b-a),c=1-b,t=(s-b)/c;return hb+m*((s-b)-c*F(t));
+        s=Math.max(0,Math.min(1,s));const ha=profileA*(profileM0+profileM)*.5;
+        if(s<=profileA)return profileM0*s+(profileM-profileM0)*profileA*profileIntegral(s/profileA);
+        if(s<=profileB)return ha+profileM*(s-profileA);
+        const hb=ha+profileM*(profileB-profileA),c=1-profileB,t=(s-profileB)/c;return hb+profileM*((s-profileB)-c*profileIntegral(t));
       }
+      function referenceProfileSlope(s){s=Math.max(0,Math.min(1,s));if(s<=profileA)return profileM0+(profileM-profileM0)*profileEase(s/profileA);if(s<=profileB)return profileM;return profileM*(1-profileEase((s-profileB)/(1-profileB)))}
       function pair(v){if(pairs.has(v.key))return pairs.get(v.key);const x=(v.x-centerX)*cell,y=(centerY-v.y)*cell,top=positions.length/3;positions.push(x,y,0);const bottom=positions.length/3;positions.push(x,y,0);const p={top,bottom,v};pairs.set(v.key,p);samples.push(p);return p}
       function wallPair(v){if(wallPairs.has(v.key))return wallPairs.get(v.key);const source=pair(v),top=positions.length/3;positions.push(positions[source.top*3],positions[source.top*3+1],positions[source.top*3+2]);const bottom=positions.length/3;positions.push(positions[source.bottom*3],positions[source.bottom*3+1],positions[source.bottom*3+2]);const p={top,bottom,v};wallPairs.set(v.key,p);return p}
-      function addWallNormal(v,nx,ny){const n=wallNormalSums.get(v.key)||[0,0];n[0]+=nx;n[1]+=ny;wallNormalSums.set(v.key,n)}
       function area(poly){let a=0;for(let i=0;i<poly.length;i++){const p=poly[i],q=poly[(i+1)%poly.length];a+=(p.x-centerX)*(centerY-q.y)-(q.x-centerX)*(centerY-p.y)}return a/2}
       function addFace(a,b,c){const ax=positions[b*3]-positions[a*3],ay=positions[b*3+1]-positions[a*3+1],az=positions[b*3+2]-positions[a*3+2],bx=positions[c*3]-positions[a*3],by=positions[c*3+1]-positions[a*3+1],bz=positions[c*3+2]-positions[a*3+2],cx=ay*bz-az*by,cy=az*bx-ax*bz,cz=ax*by-ay*bx;if(cx*cx+cy*cy+cz*cz>1e-18)indices.push(a,b,c)}
       function addPolygon(poly){if(poly.length<3)return;if(area(poly)<0)poly.reverse();const ps=poly.map(pair);for(let i=1;i<ps.length-1;i++){addFace(ps[0].top,ps[i].top,ps[i+1].top);addFace(ps[0].bottom,ps[i+1].bottom,ps[i].bottom)}for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];if(!a.boundary||!b.boundary||a.key===b.key||Math.hypot(a.x-b.x,a.y-b.y)<1e-8)continue;const key=a.key<b.key?a.key+'|'+b.key:b.key+'|'+a.key;if(boundary.has(key))boundary.get(key).count++;else boundary.set(key,{a,b,count:1})}}
@@ -424,18 +427,31 @@
         if(useAC){addPolygon(clip([a,b,c]));addPolygon(clip([a,c,d]))}else{addPolygon(clip([a,b,d]));addPolygon(clip([b,c,d]))}
       }
       const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,mask.darkChrome?8:3);
-      const segments=[],buckets=new Map(),bevelPixels=edgeWidth>0?edgeWidth/cell:0,bucketSize=Math.max(4,Math.ceil(bevelPixels+2));
-      for(const edge of wallSegments){const a=[edge.a.x,edge.a.y],b=[edge.b.x,edge.b.y];if(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8)continue;const index=segments.length;segments.push([a,b]);const bx0=Math.floor(Math.min(a[0],b[0])/bucketSize),bx1=Math.floor(Math.max(a[0],b[0])/bucketSize),by0=Math.floor(Math.min(a[1],b[1])/bucketSize),by1=Math.floor(Math.max(a[1],b[1])/bucketSize);for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){const key=bx+'|'+by;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(index)}}
-      const distanceCache=new Float32Array(g.w*g.h),widthCache=new Float32Array(g.w*g.h),seen=new Int32Array(segments.length);distanceCache.fill(-1);widthCache.fill(edgeWidth);let stamp=0;
+      // Derive a stable contour frame over several boundary chords.  Immediate
+      // marching-squares tangents oscillate by several degrees per sample and
+      // alias into the vertical barcode visible at grazing angles.
+      const boundaryPrev=new Map(),boundaryNext=new Map(),boundaryVertices=new Map(),fallbackNormals=new Map();
+      const addFallback=(v,nx,ny)=>{const n=fallbackNormals.get(v.key)||[0,0];n[0]+=nx;n[1]+=ny;fallbackNormals.set(v.key,n)};
+      for(const edge of wallSegments){boundaryVertices.set(edge.a.key,edge.a);boundaryVertices.set(edge.b.key,edge.b);boundaryNext.set(edge.a.key,edge.b);boundaryPrev.set(edge.b.key,edge.a);const dx=edge.b.x-edge.a.x,dy=edge.a.y-edge.b.y;addFallback(edge.a,dy,-dx);addFallback(edge.b,dy,-dx)}
+      const boundaryNormals=new Map(),cornerLimit=Math.cos(THREE.MathUtils.degToRad(35));
+      for(const [key,v] of boundaryVertices){
+        const prev=boundaryPrev.get(key),next=boundaryNext.get(key),fallback=fallbackNormals.get(key)||[1,0];let tx=-fallback[1],ty=fallback[0];
+        if(prev&&next){const inX=v.x-prev.x,inY=prev.y-v.y,outX=next.x-v.x,outY=v.y-next.y,inL=Math.hypot(inX,inY)||1,outL=Math.hypot(outX,outY)||1,corner=(inX*outX+inY*outY)/(inL*outL),oneX=next.x-prev.x,oneY=prev.y-next.y,prev2=boundaryPrev.get(prev.key),next2=boundaryNext.get(next.key);tx=oneX;ty=oneY;if(corner>cornerLimit&&prev2&&next2){tx=.75*oneX+.25*(next2.x-prev2.x);ty=.75*oneY+.25*(prev2.y-next2.y)}}
+        let length=Math.hypot(tx,ty)||1,nx=ty/length,ny=-tx/length;const plus=bilinear(g.field,g.w,g.h,v.x+nx*.5,v.y-ny*.5),minus=bilinear(g.field,g.w,g.h,v.x-nx*.5,v.y+ny*.5);if(plus>minus){nx=-nx;ny=-ny}boundaryNormals.set(key,[nx,ny]);
+      }
+      const segments=[],segmentMeta=[],buckets=new Map(),bevelPixels=edgeWidth>0?edgeWidth/cell:0,bucketSize=Math.max(4,Math.ceil(bevelPixels+2));
+      for(const edge of wallSegments){const a=[edge.a.x,edge.a.y],b=[edge.b.x,edge.b.y];if(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8)continue;const index=segments.length;segments.push([a,b]);segmentMeta.push(edge);const bx0=Math.floor(Math.min(a[0],b[0])/bucketSize),bx1=Math.floor(Math.max(a[0],b[0])/bucketSize),by0=Math.floor(Math.min(a[1],b[1])/bucketSize),by1=Math.floor(Math.max(a[1],b[1])/bucketSize);for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){const key=bx+'|'+by;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(index)}}
+      const distanceCache=new Float32Array(g.w*g.h),widthCache=new Float32Array(g.w*g.h),outwardX=new Float32Array(g.w*g.h),outwardY=new Float32Array(g.w*g.h),seen=new Int32Array(segments.length);distanceCache.fill(-1);widthCache.fill(edgeWidth);let stamp=0;
       function continuousDistance(v){
         if(v.id<0||edgeWidth<=0)return v.id<0?0:edgeWidth;
         if(distanceCache[v.id]>=0)return distanceCache[v.id];
         const rough=Math.max(0,Math.sqrt(dist2[v.id])-.5);
         if(rough>bevelPixels+2)return distanceCache[v.id]=edgeWidth;
-        const radius=bevelPixels+3,r2=radius*radius,mark=++stamp;let best=Infinity,bestIndex=-1,q1x=0,q1y=0;
+        const radius=bevelPixels+3,r2=radius*radius,mark=++stamp;let best=Infinity,bestIndex=-1,bestT=0,q1x=0,q1y=0;
         const bx0=Math.floor((v.x-radius)/bucketSize),bx1=Math.floor((v.x+radius)/bucketSize),by0=Math.floor((v.y-radius)/bucketSize),by1=Math.floor((v.y+radius)/bucketSize);
-        for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++)for(const index of buckets.get(bx+'|'+by)||[]){if(seen[index]===mark)continue;seen[index]=mark;const [a,b]=segments[index],dx=b[0]-a[0],dy=b[1]-a[1],den=dx*dx+dy*dy,t=den?Math.max(0,Math.min(1,((v.x-a[0])*dx+(v.y-a[1])*dy)/den)):0,px=a[0]+t*dx,py=a[1]+t*dy,d=(v.x-px)**2+(v.y-py)**2;if(d<=r2&&d<best){best=d;bestIndex=index;q1x=px;q1y=py}}
+        for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++)for(const index of buckets.get(bx+'|'+by)||[]){if(seen[index]===mark)continue;seen[index]=mark;const [a,b]=segments[index],dx=b[0]-a[0],dy=b[1]-a[1],den=dx*dx+dy*dy,t=den?Math.max(0,Math.min(1,((v.x-a[0])*dx+(v.y-a[1])*dy)/den)):0,px=a[0]+t*dx,py=a[1]+t*dy,d=(v.x-px)**2+(v.y-py)**2;if(d<=r2&&d<best){best=d;bestIndex=index;bestT=t;q1x=px;q1y=py}}
         const d1=Number.isFinite(best)?Math.sqrt(best):rough;
+        if(bestIndex>=0){const edge=segmentMeta[bestIndex],na=boundaryNormals.get(edge.a.key),nb=boundaryNormals.get(edge.b.key);if(na&&nb){let nx=na[0]+(nb[0]-na[0])*bestT,ny=na[1]+(nb[1]-na[1])*bestT,length=Math.hypot(nx,ny)||1;outwardX[v.id]=nx/length;outwardY[v.id]=ny/length}}
         if(style==='reference'&&bestIndex>=0&&d1>.05&&d1<bevelPixels){const search=bevelPixels/.44+2,s2=search*search,mark2=++stamp,ux=q1x-v.x,uy=q1y-v.y;let local=edgeWidth;const ox0=Math.floor((v.x-search)/bucketSize),ox1=Math.floor((v.x+search)/bucketSize),oy0=Math.floor((v.y-search)/bucketSize),oy1=Math.floor((v.y+search)/bucketSize);for(let by=oy0;by<=oy1;by++)for(let bx=ox0;bx<=ox1;bx++)for(const index of buckets.get(bx+'|'+by)||[]){if(index===bestIndex||seen[index]===mark2)continue;seen[index]=mark2;const [a,b]=segments[index],dx=b[0]-a[0],dy=b[1]-a[1],den=dx*dx+dy*dy,t=den?Math.max(0,Math.min(1,((v.x-a[0])*dx+(v.y-a[1])*dy)/den)):0,px=a[0]+t*dx,py=a[1]+t*dy,rx=px-v.x,ry=py-v.y,d2sq=rx*rx+ry*ry;if(d2sq<.0225||d2sq>s2)continue;const d2=Math.sqrt(d2sq),opposition=-(ux*rx+uy*ry)/(d1*d2);if(opposition<=.35)continue;if(bilinear(g.field,g.w,g.h,v.x+rx*.25,v.y+ry*.25)<.48||bilinear(g.field,g.w,g.h,v.x+rx*.5,v.y+ry*.5)<.48||bilinear(g.field,g.w,g.h,v.x+rx*.75,v.y+ry*.75)<.48)continue;const chord=Math.hypot(px-q1x,py-q1y),tOpp=Math.min(1,(opposition-.35)/.3),weight=tOpp*tOpp*(3-2*tOpp),target=Math.min(edgeWidth,Math.max(cell*1.5,chord*cell*.44));local=Math.min(local,edgeWidth-weight*(edgeWidth-target))}widthCache[v.id]=local}
         return distanceCache[v.id]=Math.min(edgeWidth,Math.max(0,d1*cell));
       }
@@ -464,8 +480,13 @@
       }
       // Give the wall its own seam vertices.  This keeps irregular top-face
       // triangles from twisting the wall normals into a striped/scalloped edge.
-      for(const seg of wallSegments){const a=wallPair(seg.a),b=wallPair(seg.b);addFace(a.top,a.bottom,b.bottom);addFace(a.top,b.bottom,b.top);const dx=positions[b.top*3]-positions[a.top*3],dy=positions[b.top*3+1]-positions[a.top*3+1],length=Math.hypot(dx,dy)||1,nx=dy/length,ny=-dx/length;addWallNormal(seg.a,nx,ny);addWallNormal(seg.b,nx,ny)}
-      if(!indices.length)return null;const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setIndex(indices);geo.computeBoundingBox();const actualW=geo.boundingBox.max.x-geo.boundingBox.min.x,scale=modelW/Math.max(.001,actualW);geo.scale(scale,scale,1);geo.computeVertexNormals();const normals=geo.getAttribute('normal');for(const [key,p] of wallPairs){const sum=wallNormalSums.get(key)||[1,0],length=Math.hypot(sum[0],sum[1])||1,nx=sum[0]/length,ny=sum[1]/length;normals.setXYZ(p.top,nx,ny,0);normals.setXYZ(p.bottom,nx,ny,0)}normals.needsUpdate=true;geo.computeBoundingBox();geo.computeBoundingSphere();
+      for(const seg of wallSegments){const a=wallPair(seg.a),b=wallPair(seg.b);addFace(a.top,a.bottom,b.bottom);addFace(a.top,b.bottom,b.top)}
+      if(!indices.length)return null;const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setIndex(indices);geo.computeBoundingBox();const actualW=geo.boundingBox.max.x-geo.boundingBox.min.x,scale=modelW/Math.max(.001,actualW);geo.scale(scale,scale,1);geo.computeVertexNormals();const normals=geo.getAttribute('normal');
+      // The surface geometry remains the exact watertight print mesh, while its
+      // display normals come from the analytic chamfer derivative and stable
+      // contour frame instead of irregular grid-triangle averages.
+      if(!reliefDepth&&edgeWidth>0&&style!=='flat')for(const p of samples){const d=continuousDistance(p.v),w=p.v.id>=0?widthCache[p.v.id]:edgeWidth,s=w>0?Math.max(0,Math.min(1,d/w)):1,n=p.v.id>=0?[outwardX[p.v.id],outwardY[p.v.id]]:(boundaryNormals.get(p.v.key)||[0,0]),derivative=style==='reference'?referenceProfileSlope(s):6*s*(1-s),slope=bevelRise/Math.max(cell*.25,w*scale)*derivative,hyp=Math.hypot(n[0]*slope,n[1]*slope,1);if(s>=.9999||slope<1e-6||Math.hypot(n[0],n[1])<.5){normals.setXYZ(p.top,0,0,1);normals.setXYZ(p.bottom,0,0,-1)}else{normals.setXYZ(p.top,n[0]*slope/hyp,n[1]*slope/hyp,1/hyp);normals.setXYZ(p.bottom,n[0]*slope/hyp,n[1]*slope/hyp,-1/hyp)}}
+      for(const [key,p] of wallPairs){const n=boundaryNormals.get(key);if(!n)continue;normals.setXYZ(p.top,n[0],n[1],0);normals.setXYZ(p.bottom,n[0],n[1],0)}normals.needsUpdate=true;geo.computeBoundingBox();geo.computeBoundingSphere();
       return {geo,triangles:indices.length/3,height:geo.boundingBox.max.y-geo.boundingBox.min.y,edgeWidth,axial:bevelRise,reliefDepth};
     }
 
