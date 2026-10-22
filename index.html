@@ -426,20 +426,31 @@
         const centreInside=(a.value+b.value+c.value+d.value)*.25>=.5,useAC=(code===5)===centreInside;
         if(useAC){addPolygon(clip([a,b,c]));addPolygon(clip([a,c,d]))}else{addPolygon(clip([a,b,d]));addPolygon(clip([b,c,d]))}
       }
-      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,mask.darkChrome?8:3);
-      // Derive a stable contour frame over several boundary chords.  Immediate
-      // marching-squares tangents oscillate by several degrees per sample and
-      // alias into the vertical barcode visible at grazing angles.
+      // Fair every contour enough to remove the last one-pixel marching-squares
+      // steps from the exported wall.  The curvature guard inside the fairing
+      // keeps points, hooks, and small cut-outs from being rounded away.
+      const wallSegments=[...boundary.values()].filter(s=>s.count===1);smoothBoundarySafely(wallSegments,8);
+      // Derive the display frame over a fixed real-world distance.  A fixed
+      // vertex count changes character with trace resolution and leaves long,
+      // shallow arcs looking ribbed at a grazing camera angle.
       const boundaryPrev=new Map(),boundaryNext=new Map(),boundaryVertices=new Map(),fallbackNormals=new Map();
       const addFallback=(v,nx,ny)=>{const n=fallbackNormals.get(v.key)||[0,0];n[0]+=nx;n[1]+=ny;fallbackNormals.set(v.key,n)};
       for(const edge of wallSegments){boundaryVertices.set(edge.a.key,edge.a);boundaryVertices.set(edge.b.key,edge.b);boundaryNext.set(edge.a.key,edge.b);boundaryPrev.set(edge.b.key,edge.a);const dx=edge.b.x-edge.a.x,dy=edge.a.y-edge.b.y;addFallback(edge.a,dy,-dx);addFallback(edge.b,dy,-dx)}
       const orientNormal=(v,nx,ny)=>{const length=Math.hypot(nx,ny)||1;nx/=length;ny/=length;const plus=bilinear(g.field,g.w,g.h,v.x+nx*.5,v.y-ny*.5),minus=bilinear(g.field,g.w,g.h,v.x-nx*.5,v.y+ny*.5);return plus>minus?[-nx,-ny]:[nx,ny]};
       const rawBoundaryNormals=new Map();for(const [key,v] of boundaryVertices){const n=fallbackNormals.get(key)||[1,0];rawBoundaryNormals.set(key,orientNormal(v,n[0],n[1]))}
-      // A +/-4 chord is about 0.6 mm at the default trace density.  It removes
-      // sub-pixel tangent chatter, while the raw-normal gate prevents the window
-      // from crossing deliberate hooks, points, or tight interior corners.
-      const boundaryNormals=new Map(),normalGate=Math.cos(THREE.MathUtils.degToRad(25));
-      for(const [key,v] of boundaryVertices){const raw=rawBoundaryNormals.get(key),fallback=fallbackNormals.get(key)||[1,0];let before=v,after=v;for(let step=0;step<4;step++){const candidate=boundaryPrev.get(before.key),n=candidate&&rawBoundaryNormals.get(candidate.key);if(!candidate||!n||raw[0]*n[0]+raw[1]*n[1]<normalGate)break;before=candidate}for(let step=0;step<4;step++){const candidate=boundaryNext.get(after.key),n=candidate&&rawBoundaryNormals.get(candidate.key);if(!candidate||!n||raw[0]*n[0]+raw[1]*n[1]<normalGate)break;after=candidate}const tx=after===before?-fallback[1]:after.x-before.x,ty=after===before?fallback[0]:before.y-after.y;boundaryNormals.set(key,orientNormal(v,ty,-tx))}
+      // Fit a tangent with PCA over roughly 1.25 mm of contour on each side.
+      // This averages raster-scale direction changes rather than merely hiding
+      // them with a short chord.  A generous turn gate passes 45-degree grid
+      // quantisation but still stops the fit at genuine cusps and hard corners.
+      const boundaryNormals=new Map(),normalGate=Math.cos(THREE.MathUtils.degToRad(58)),normalRadiusPx=Math.max(6,Math.min(30,1.25/cell));
+      for(const [key,v] of boundaryVertices){
+        const raw=rawBoundaryNormals.get(key),fallback=fallbackNormals.get(key)||[1,0],points=[v];let before=v,after=v;
+        const walk=(start,links,side)=>{let current=start,distance=0;for(let step=0;step<72&&distance<normalRadiusPx;step++){const candidate=links.get(current.key),n=candidate&&rawBoundaryNormals.get(candidate.key);if(!candidate||candidate.key===v.key||!n||raw[0]*n[0]+raw[1]*n[1]<normalGate)break;const length=Math.hypot(candidate.x-current.x,candidate.y-current.y);if(length<1e-7)break;distance+=length;points.push(candidate);current=candidate}if(side<0)before=current;else after=current};
+        walk(v,boundaryPrev,-1);walk(v,boundaryNext,1);
+        let tx=after.x-before.x,ty=before.y-after.y;
+        if(points.length>=5){let mx=0,my=0;for(const p of points){mx+=p.x;my-=p.y}mx/=points.length;my/=points.length;let xx=0,xy=0,yy=0;for(const p of points){const dx=p.x-mx,dy=-p.y-my;xx+=dx*dx;xy+=dx*dy;yy+=dy*dy}if(xx+yy>1e-8){const angle=.5*Math.atan2(2*xy,xx-yy),px=Math.cos(angle),py=Math.sin(angle);if(px*tx+py*ty<0){tx=-px;ty=-py}else{tx=px;ty=py}}}
+        if(Math.hypot(tx,ty)<1e-7){tx=-fallback[1];ty=fallback[0]}boundaryNormals.set(key,orientNormal(v,ty,-tx));
+      }
       const segments=[],segmentMeta=[],buckets=new Map(),bevelPixels=edgeWidth>0?edgeWidth/cell:0,bucketSize=Math.max(4,Math.ceil(bevelPixels+2));
       for(const edge of wallSegments){const a=[edge.a.x,edge.a.y],b=[edge.b.x,edge.b.y];if(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8)continue;const index=segments.length;segments.push([a,b]);segmentMeta.push(edge);const bx0=Math.floor(Math.min(a[0],b[0])/bucketSize),bx1=Math.floor(Math.max(a[0],b[0])/bucketSize),by0=Math.floor(Math.min(a[1],b[1])/bucketSize),by1=Math.floor(Math.max(a[1],b[1])/bucketSize);for(let by=by0;by<=by1;by++)for(let bx=bx0;bx<=bx1;bx++){const key=bx+'|'+by;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(index)}}
       const distanceCache=new Float32Array(g.w*g.h),widthCache=new Float32Array(g.w*g.h),outwardX=new Float32Array(g.w*g.h),outwardY=new Float32Array(g.w*g.h),seen=new Int32Array(segments.length);distanceCache.fill(-1);widthCache.fill(edgeWidth);let stamp=0;
